@@ -483,18 +483,18 @@ class Player:
         if not value:
             minqlxtended.set_holdable(self.id, 0)
         elif value == "teleporter":
-            minqlxtended.set_holdable(self.id, 27)
+            minqlxtended.set_holdable(self.id, 27)  # MODELINDEX_TELEPORTER
         elif value == "medkit":
-            minqlxtended.set_holdable(self.id, 28)
+            minqlxtended.set_holdable(self.id, 28)  # MODELINDEX_MEDKIT
         elif value == "flight":
-            minqlxtended.set_holdable(self.id, 34)
+            minqlxtended.set_holdable(self.id, 34)  # MODELINDEX_FLIGHT
             self.flight(reset=True)
         elif value == "kamikaze":
-            minqlxtended.set_holdable(self.id, 37)
+            minqlxtended.set_holdable(self.id, 37)  # MODELINDEX_KAMIKAZE
         elif value == "portal":
-            minqlxtended.set_holdable(self.id, 38)
+            minqlxtended.set_holdable(self.id, 38)  # MODELINDEX_PORTAL
         elif value == "invulnerability":
-            minqlxtended.set_holdable(self.id, 39)
+            minqlxtended.set_holdable(self.id, 39)  # MODELINDEX_INVULNERABILITY
         else:
             raise ValueError("Invalid holdable item.")
 

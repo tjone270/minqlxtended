@@ -30,12 +30,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define MAX_CLIENTS 64
 #define MAX_CHALLENGES 1024
 #define MAX_MSGLEN 16384
+#define MAX_NETCHAN_MSGLEN 32768 // [QL] netchan uses 32KB buffers (Q3 used MAX_MSGLEN=16KB)
 #define MAX_PS_EVENTS 2
 #define MAX_MAP_AREA_BYTES 32 // bit vector of area visibility
 #define MAX_INFO_STRING 1024
 #define MAX_RELIABLE_COMMANDS 64 // max string commands buffered for restransmit
 #define MAX_STRING_CHARS 1024    // max length of a string passed to Cmd_TokenizeString
-#define MAX_NAME_LENGTH 32       // max length of a client name
+#define MAX_NAME_LENGTH 40       // [QL] max length of a client name (Q3 used 32)
 #define MAX_QPATH 64             // max length of a quake game pathname
 #define MAX_DOWNLOAD_WINDOW 8    // max of eight download frames
 #define MAX_NETNAME 36
@@ -197,7 +198,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define FL_NO_HUMANS 0x00004000     // spawn point just for bots
 #define FL_FORCE_GESTURE 0x00008000 // force gesture on client
 
+// Damage flags (dflags parameter to G_Damage)
+// Verified from qagamex64.so build 1069.
+#define DAMAGE_RADIUS 0x00000001
+#define DAMAGE_NO_ARMOR 0x00000002
+#define DAMAGE_NO_KNOCKBACK 0x00000004
 #define DAMAGE_NO_PROTECTION 0x00000008
+#define DAMAGE_NO_TEAM_PROTECTION 0x00000010 // [QL]
 
 // angle helpers
 #define ANGLE2SHORT(x) ((int)((x) * 65536 / 360) & 65535)
@@ -223,21 +230,33 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                           // (entityShared_t->singleClient)
 
 // pmove->pm_flags
-// these are just for moving the player, not for weapons and stuff
-// that are server-side only
-#define PMF_DUCKED 1           // player is ducked
-#define PMF_JUMP_HELD 2        // player is holding jump
-#define PMF_BACKWARDS_JUMP 8   // go into backwards land
-#define PMF_BACKWARDS_RUN 16   // coast down to backwards run
-#define PMF_TIME_LAND 32       // pm_time is time before rejump
-#define PMF_TIME_KNOCKBACK 64  // pm_time is an air-accelerate only time
-#define PMF_TIME_WATERJUMP 256 // pm_time is waterjump
-#define PMF_RESPAWNED 512      // clear after attack and jump buttons come up
-#define PMF_USE_ITEM_HELD 1024 // player is holding use
-#define PMF_GRAPPLE_PULL 2048  // pull towards grapple location
-#define PMF_FOLLOW 4096        // spectate following another player
-#define PMF_SCOREBOARD 8192    // spectate as a scoreboard
-#define PMF_INVULEXPAND 16384  // invulnerability sphere set to full size
+// Verified from qagamex64.so build 1069 decompilation.
+#define PMF_DUCKED 0x0001
+#define PMF_JUMP_HELD 0x0002
+#define PMF_FROZEN 0x0004 // [QL] freeze tag frozen
+#define PMF_BACKWARDS_JUMP 0x0008
+#define PMF_BACKWARDS_RUN 0x0010
+#define PMF_RESPAWNED 0x0020
+#define PMF_TIME_KNOCKBACK 0x0040
+#define PMF_TIME_WATERJUMP 0x0080
+#define PMF_PAUSED 0x0100 // [QL] game is paused
+#define PMF_ZOOM 0x0200   // [QL]
+#define PMF_TIME_LAND 0x0400
+#define PMF_PROMODE 0x0800 // [QL] CPM physics active
+#define PMF_FOLLOW 0x1000
+#define PMF_SCOREBOARD 0x2000
+#define PMF_INVULEXPAND 0x4000
+#define PMF_GRAPPLE_PULL 0x8000
+#define PMF_AIR_CONTROL 0x10000           // [QL] air control enabled
+#define PMF_DOUBLE_JUMP 0x20000           // [QL] double jump enabled
+#define PMF_NO_AUTOHOP 0x40000            // [QL] auto-hop disabled for this client
+#define PMF_ZOMBIE 0x80000                // [QL] Red Rover zombie state
+#define PMF_CROUCH_SLIDE 0x100000         // [QL] crouch slide active
+#define PMF_CROUCH_SLIDE_ENABLED 0x200000 // [QL] crouch slide feature enabled
+#define PMF_CIRCLE_STRAFE 0x400000        // [QL] circle strafe detection
+#define PMF_AUTOHOP_BLOCK 0x800000        // [QL] auto-hop blocked temporarily
+#define PMF_USE_ITEM 0x1000000            // [QL] use item
+#define PMF_LOADOUT_LOCKED 0x2000000      // [QL] loadout locked during round
 #define PMF_ALL_TIMES (PMF_TIME_WATERJUMP | PMF_TIME_LAND | PMF_TIME_KNOCKBACK)
 
 // Item numbers
@@ -377,37 +396,19 @@ typedef enum {
     STAT_OTHER_ARMOR,
 } statIndex_t;
 
+// QL's vmMain dispatch table ordering - differs from Q3!
+// Verified from qagamex64.so build 1069 vmMain jump table at 0x3cff00.
 typedef enum {
-    GAME_INIT, // ( int levelTime, int randomSeed, int restart );
-    // init and shutdown will be called every single level
-    // The game should call G_GET_ENTITY_TOKEN to parse through all the
-    // entity configuration text and spawn gentities.
-
-    GAME_SHUTDOWN, // (void);
-
-    GAME_CLIENT_CONNECT, // ( int clientNum, qboolean firstTime, qboolean isBot );
-    // return NULL if the client is allowed to connect, otherwise return
-    // a text string with the reason for denial
-
-    GAME_CLIENT_BEGIN, // ( int clientNum );
-
-    GAME_CLIENT_USERINFO_CHANGED, // ( int clientNum );
-
-    GAME_CLIENT_DISCONNECT, // ( int clientNum );
-
-    GAME_CLIENT_COMMAND, // ( int clientNum );
-
-    GAME_CLIENT_THINK, // ( int clientNum );
-
-    GAME_RUN_FRAME, // ( int levelTime );
-
-    GAME_CONSOLE_COMMAND, // ( void );
-    // ConsoleCommand will be called when a command has been issued
-    // that is not recognized as a builtin function.
-    // The game can issue trap_argc() / trap_argv() commands to get the command
-    // and parameters.  Return qfalse if the game doesn't recognize it as a command.
-
-    BOTAI_START_FRAME // ( int time );
+    GAME_SHUTDOWN,                // 0  G_ShutdownGame(int restart)
+    GAME_RUN_FRAME,               // 1  G_RunFrame(int levelTime)
+    GAME_REGISTER_CVARS,          // 2  G_RegisterCvars(void)  [QL addition]
+    GAME_INIT,                    // 3  G_InitGame(int levelTime, int randomSeed, int restart)
+    GAME_CONSOLE_COMMAND,         // 4  ConsoleCommand(void)
+    GAME_CLIENT_USERINFO_CHANGED, // 5  ClientUserinfoChanged(int clientNum)
+    GAME_CLIENT_THINK,            // 6  ClientThink(int clientNum)
+    GAME_CLIENT_DISCONNECT,       // 7  ClientDisconnect(int clientNum)
+    GAME_CLIENT_CONNECT,          // 8  ClientConnect(int clientNum, qboolean firstTime, qboolean isBot)
+    GAME_CLIENT_COMMAND,          // 9  ClientCommand(int clientNum)
 } gameExport_t;
 
 typedef enum {
@@ -773,16 +774,18 @@ typedef struct {
 } msg_t;
 
 typedef struct __attribute__((aligned(4))) usercmd_s {
-    int serverTime;
-    int angles[3];
-    int buttons;
-    byte weapon;
-    byte weaponPrimary;
-    byte fov;
-    char forwardmove;
-    char rightmove;
-    char upmove;
-} usercmd_t;
+    int serverTime;     // +0
+    int angles[3];      // +4
+    int buttons;        // +16
+    byte weapon;        // +20
+    byte weaponPrimary; // +21
+    byte fov;           // +22
+    char forwardmove;   // +23
+    char rightmove;     // +24
+    char upmove;        // +25
+    byte doubleTap;     // +26  unknown purpose, possibly dodge/double-tap indicator
+    byte _pad;          // +27
+} usercmd_t;            // 28 bytes
 
 typedef enum {
     NS_CLIENT,
@@ -805,7 +808,8 @@ typedef enum {
     TR_LINEAR,
     TR_LINEAR_STOP,
     TR_SINE, // value = base + sin( time / duration ) * delta
-    TR_GRAVITY
+    TR_GRAVITY,
+    TR_CUSTOM_GRAVITY // [QL] uses trajectory_t.gravity field
 } trType_t;
 
 typedef struct {
@@ -817,30 +821,32 @@ typedef struct {
     unsigned short port;
 } netadr_t;
 
+// netchan_t - 65,596 bytes. Verified from qzeroded.x64 build 1069.
+// [QL] uses 32KB buffers (MAX_NETCHAN_MSGLEN) instead of Q3's 16KB (MAX_MSGLEN).
 typedef struct {
-    netsrc_t sock;
+    netsrc_t sock; // +0
 
-    int dropped; // between last packet and previous
+    int dropped; // +4   between last packet and previous
 
-    netadr_t remoteAddress;
-    int qport; // qport value to write when transmitting
+    netadr_t remoteAddress; // +8   (20 bytes)
+    int qport;              // +28  qport value to write when transmitting
 
     // sequencing variables
-    int incomingSequence;
-    int outgoingSequence;
+    int incomingSequence; // +32
+    int outgoingSequence; // +36
 
     // incoming fragment assembly buffer
-    int fragmentSequence;
-    int fragmentLength;
-    byte fragmentBuffer[MAX_MSGLEN];
+    int fragmentSequence;                    // +40
+    int fragmentLength;                      // +44
+    byte fragmentBuffer[MAX_NETCHAN_MSGLEN]; // +48   (32768 bytes)
 
     // outgoing fragment buffer
     // we need to space out the sending of large fragmented messages
-    qboolean unsentFragments;
-    int unsentFragmentStart;
-    int unsentLength;
-    byte unsentBuffer[MAX_MSGLEN];
-} netchan_t;
+    qboolean unsentFragments;              // +32816
+    int unsentFragmentStart;               // +32820
+    int unsentLength;                      // +32824
+    byte unsentBuffer[MAX_NETCHAN_MSGLEN]; // +32828 (32768 bytes)
+} netchan_t;                               // 65,596 bytes
 
 typedef struct cplane_s {
     vec3_t normal;
@@ -865,71 +871,73 @@ typedef struct {
 // playerState_t is a full superset of entityState_t as it is used by players,
 // so if a playerState_t is transmitted, the entityState_t can be fully derived
 // from it.
+// Total size: 592 bytes. Verified from qagamex64.so build 1069.
 typedef struct playerState_s {
-    int commandTime;
-    int pm_type;
-    int bobCycle;
-    int pm_flags;
-    int pm_time;
-    vec3_t origin;
-    vec3_t velocity;
-    int weaponTime;
-    int gravity;
-    int speed;
-    int delta_angles[3];
-    int groundEntityNum;
-    int legsTimer;
-    int legsAnim;
-    int torsoTimer;
-    int torsoAnim;
-    int movementDir;
-    vec3_t grapplePoint;
-    int eFlags;
-    int eventSequence;
-    int events[2];
-    int eventParms[2];
-    int externalEvent;
-    int externalEventParm;
-    int clientNum;
-    int location;
-    int weapon;
-    int weaponPrimary;
-    int weaponstate;
-    int fov;
-    vec3_t viewangles;
-    int viewheight;
-    int damageEvent;
-    int damageYaw;
-    int damagePitch;
-    int damageCount;
-    int stats[16];
-    int persistant[16];
-    int powerups[16];
-    int ammo[16];
-    int generic1;
-    int loopSound;
-    int jumppad_ent;
-    int jumpTime;
-    int doubleJumped;
-    int crouchTime;
-    int crouchSlideTime;
-    char forwardmove;
-    char rightmove;
-    char upmove;
-    int ping;
-    int pmove_framecount;
-    int jumppad_frame;
-    int entityEventSequence;
-    int freezetime;
-    int thawtime;
-    int thawClientNum_valid;
-    int thawClientNum;
-    int respawnTime;
-    int localPersistant[16];
-    int roundDamage;
-    int roundShots;
-    int roundHits;
-} playerState_t;
+    int commandTime;         // +0
+    int pm_type;             // +4
+    int bobCycle;            // +8
+    int pm_flags;            // +12
+    int pm_time;             // +16
+    vec3_t origin;           // +20
+    vec3_t velocity;         // +32
+    int weaponTime;          // +44
+    int gravity;             // +48
+    int speed;               // +52
+    int delta_angles[3];     // +56
+    int groundEntityNum;     // +68
+    int legsTimer;           // +72
+    int legsAnim;            // +76
+    int torsoTimer;          // +80
+    int torsoAnim;           // +84
+    int movementDir;         // +88
+    vec3_t grapplePoint;     // +92
+    int eFlags;              // +104
+    int eventSequence;       // +108
+    int events[2];           // +112
+    int eventParms[2];       // +120
+    int externalEvent;       // +128
+    int externalEventParm;   // +132
+    int clientNum;           // +136
+    int location;            // +140  [QL]
+    int weapon;              // +144
+    int weaponPrimary;       // +148  [QL]
+    int weaponstate;         // +152
+    int fov;                 // +156  [QL]
+    vec3_t viewangles;       // +160
+    int viewheight;          // +172
+    int damageEvent;         // +176
+    int damageYaw;           // +180
+    int damagePitch;         // +184
+    int damageCount;         // +188
+    int stats[16];           // +192
+    int persistant[16];      // +256
+    int powerups[16];        // +320
+    int ammo[16];            // +384
+    int generic1;            // +448
+    int loopSound;           // +452
+    int jumppad_ent;         // +456
+    int jumpTime;            // +460  [QL]
+    int doubleJumped;        // +464  [QL]
+    int crouchTime;          // +468  [QL]
+    int crouchSlideTime;     // +472  [QL]
+    char forwardmove;        // +476  [QL]
+    char rightmove;          // +477  [QL]
+    char upmove;             // +478  [QL]
+    char _pad;               // +479  alignment padding
+    int ping;                // +480
+    int pmove_framecount;    // +484
+    int jumppad_frame;       // +488
+    int entityEventSequence; // +492
+    int freezetime;          // +496  [QL] freeze tag
+    int thawtime;            // +500  [QL]
+    int thawClientNum_valid; // +504  [QL]
+    int thawClientNum;       // +508  [QL]
+    int respawnTime;         // +512  [QL]
+    int localPersistant[16]; // +516  [QL] (64 bytes)
+    int roundDamage;         // +580  [QL]
+    int roundShots;          // +584  [QL]
+    int roundHits;           // +588  [QL]
+} playerState_t;             // 592 bytes
 
 typedef struct __attribute__((aligned(8))) {
     playerState_t *ps;
@@ -967,18 +975,19 @@ typedef struct {
 
 typedef struct netchan_buffer_s {
     msg_t msg;
-    byte msgBuffer[MAX_MSGLEN];
+    byte msgBuffer[MAX_NETCHAN_MSGLEN];
     struct netchan_buffer_s *next;
 } netchan_buffer_t;
 
+// trajectory_t - 40 bytes (NOT 36 as in Q3 - QL adds gravity field)
 typedef struct {
-    trType_t trType;
-    int trTime;
-    int trDuration;
-    vec3_t trBase;
-    vec3_t trDelta;
-    float gravity;
-} trajectory_t;
+    trType_t trType; // +0
+    int trTime;      // +4
+    int trDuration;  // +8
+    vec3_t trBase;   // +12
+    vec3_t trDelta;  // +24
+    float gravity;   // +36  [QL] used by TR_CUSTOM_GRAVITY
+} trajectory_t;      // 40 bytes
 
 typedef struct entityState_s {
     int number;
@@ -1038,96 +1047,107 @@ typedef struct {
     entityShared_t r; // shared by both the server system and game
 } sharedEntity_t;
 
+// client_t - 158,328 bytes (x64). Verified from qzeroded.x64 build 1069.
+// Layout reconstructed from SV_Status_f loop stride (0x26A78) and field
+// access patterns in SV_DirectConnect, SV_DropClient, SV_SendClientGameState,
+// SV_CheckTimeouts, SV_ClientEnterWorld, SV_Netchan_Transmit.
 typedef struct client_s {
-    clientState_t state;
-    char userinfo[MAX_INFO_STRING]; // name, etc
+    clientState_t state;            // +0
+    char userinfo[MAX_INFO_STRING]; // +4       (1024 bytes)
 
-    char reliableCommands[MAX_RELIABLE_COMMANDS][MAX_STRING_CHARS];
-    int reliableSequence;    // last added reliable message, not necesarily sent or acknowledged yet
-    int reliableAcknowledge; // last acknowledged reliable message
-    int reliableSent;        // last sent reliable message, not necesarily acknowledged yet
-    int messageAcknowledge;
+    char reliableCommands[MAX_RELIABLE_COMMANDS][MAX_STRING_CHARS]; // +1028 (64*1024=65536)
+    int reliableSequence;                                           // +66564
+    int reliableAcknowledge;                                        // +66568
+    int reliableSent;                                               // +66572
+    int messageAcknowledge;                                         // +66576
 
-    int gamestateMessageNum; // netchan->outgoingSequence of gamestate
-    int challenge;
+    int gamestateMessageNum; // +66580
+    int challenge;           // +66584
 
-    usercmd_t lastUsercmd;
-    int lastMessageNum;    // for delta compression
-    int lastClientCommand; // reliable client message sequence
-    char lastClientCommandString[MAX_STRING_CHARS];
-    sharedEntity_t *gentity;    // SV_GentityNum(clientnum)
-    char name[MAX_NAME_LENGTH]; // extracted from userinfo, high bits masked
+    usercmd_t lastUsercmd;                          // +66588  (28 bytes)
+    int lastMessageNum;                             // +66616
+    int lastClientCommand;                          // +66620
+    char lastClientCommandString[MAX_STRING_CHARS]; // +66624  (1024 bytes)
+    sharedEntity_t *gentity;                        // +67648  (8 bytes, ptr)
+    char name[MAX_NAME_LENGTH];                     // +67656  [QL] 40 bytes (Q3 used 32)
 
-    // Mino: I think everything above this is correct. Below is a mess.
+    // --- UDP download fields (vestigial in QL - completely unreferenced) ---
+    char downloadName[MAX_QPATH];                       // +67696  (64 bytes)
+    fileHandle_t download;                              // +67760
+    int downloadSize;                                   // +67764
+    int downloadCount;                                  // +67768
+    int downloadClientBlock;                            // +67772
+    int downloadCurrentBlock;                           // +67776
+    int downloadXmitBlock;                              // +67780
+    unsigned char *downloadBlocks[MAX_DOWNLOAD_WINDOW]; // +67784  (64 bytes on x64)
+    int downloadBlockSize[MAX_DOWNLOAD_WINDOW];         // +67848  (32 bytes)
+    qboolean downloadEOF;                               // +67880
+    int downloadSendTime;                               // +67884
 
-    // downloading
-    char downloadName[MAX_QPATH];                       // if not empty string, we are downloading
-    fileHandle_t download;                              // file being downloaded
-    int downloadSize;                                   // total bytes (can't use EOF because of paks)
-    int downloadCount;                                  // bytes sent
-    int downloadClientBlock;                            // last block we sent to the client, awaiting ack
-    int downloadCurrentBlock;                           // current block number
-    int downloadXmitBlock;                              // last block we xmited
-    unsigned char *downloadBlocks[MAX_DOWNLOAD_WINDOW]; // the buffers for the download blocks
-    int downloadBlockSize[MAX_DOWNLOAD_WINDOW];
-    qboolean downloadEOF; // We have sent the EOF block
-    int downloadSendTime; // time we last got an ack from the client
+    // --- Dead space: unreferenced region, likely remnant of removed features ---
+    uint8_t _dead_space[3972]; // +67888
 
-    int deltaMessage;                       // frame last client usercmd message
-    int nextReliableTime;                   // svs.time when another reliable command will be allowed
-    int lastPacketTime;                     // svs.time when packet was last received
-    int lastConnectTime;                    // svs.time when connection started
-    int nextSnapshotTime;                   // send another snapshot when svs.time >= nextSnapshotTime
-    qboolean rateDelayed;                   // true if nextSnapshotTime was set based on rate instead of snapshotMsec
-    int timeoutCount;                       // must timeout a few frames in a row so debugging doesn't break
-    clientSnapshot_t frames[PACKET_BACKUP]; // updates can be delta'd from here
-    int ping;
-    int rate;         // bytes / second
-    int snapshotMsec; // requests a snapshot every snapshotMsec unless rate choked
-    int pureAuthentic;
-    qboolean gotCP; // TTimo - additional flag to distinguish between a bad pure checksum, and no cp command at all
-    netchan_t netchan;
-    netchan_buffer_t *netchan_start_queue;
-    netchan_buffer_t **netchan_end_queue;
+    int deltaMessage;                       // +71860
+    int nextReliableTime;                   // +71864
+    float floodCount;                       // +71868  [QL] token-bucket flood counter
+    int lastPacketTime;                     // +71872
+    int lastConnectTime;                    // +71876
+    int nextSnapshotTime;                   // +71880
+    qboolean rateDelayed;                   // +71884
+    int timeoutCount;                       // +71888
+    clientSnapshot_t frames[PACKET_BACKUP]; // +71892  (32*648=20736)
+    int ping;                               // +92628
+    int rate;                               // +92632
+    int snapshotMsec;                       // +92636
+    int pureAuthentic;                      // +92640
+    qboolean gotCP;                         // +92644
+    netchan_t netchan;                      // +92648  (65596 bytes)
+    // implicit 4-byte padding for pointer alignment    // +158244
+    netchan_buffer_t *netchan_start_queue; // +158248 (8 bytes, ptr)
+    netchan_buffer_t **netchan_end_queue;  // +158256 (8 bytes, ptr)
 
-    // Mino: Holy crap. A bunch of data was added. I have no idea where it actually goes,
-    // but this will at least correct sizeof(client_t).
-#if defined(__x86_64__) || defined(_M_X64)
-    uint8_t _unknown2[36808];
-#elif defined(__i386) || defined(_M_IX86)
-    uint8_t _unknown2[36836]; // TODO: Outdated.
-#endif
-
-    // Mino: Woohoo! How nice of them to put the SteamID last.
-    uint64_t steam_id;
-} client_t;
+    // --- Post-netchan fields (QL additions) ---
+    uint8_t _reserved[40]; // +158264 unreferenced
+    int rageQuit;          // +158304 [QL] set by game module via syscall
+    int serverIdSequence;  // +158308 [QL] 7-bit server ID tracking
+    int oldServerTime;     // +158312 [QL] map_restart time adjustment
+    int _padding;          // +158316
+    uint64_t steam_id;     // +158320 [QL]
+} client_t;                // 158,328 bytes (x64)
 
 //
 // SERVER
 //
 
+// challenge_t - 696 bytes (0x2B8 stride). Verified from qzeroded.x64 build 1069.
+// [QL] adds Steam authentication fields after the Q3 base fields.
 typedef struct {
-    netadr_t adr;
-    int challenge;
-    int time;      // time the last packet was sent to the autherize server
-    int pingTime;  // time the challenge response was sent to client
-    int firstTime; // time the adr was first used, for authorize timeout checks
-    qboolean connected;
-} challenge_t;
+    netadr_t adr;         // +0    (20 bytes)
+    int challenge;        // +20
+    int time;             // +24   time the last packet was sent to the authorize server
+    int pingTime;         // +28   time the challenge response was sent to client
+    int firstTime;        // +32   time the adr was first used, for authorize timeout checks
+    qboolean connected;   // +36
+    uint64_t steamKey;    // +40   [QL] Steam session key
+    byte authToken[512];  // +48   [QL] Steam authentication token
+    int authTokenLen;     // +560  [QL] length of authToken
+    char wasRefused[132]; // +564  [QL] refusal reason string
+} challenge_t;            // 696 bytes
 
-// this structure will be cleared only when the game dll changes
+// serverStatic_t - cleared only when the game dll changes.
+// Verified from qzeroded.x64 build 1069.
 typedef struct {
-    qboolean initialized;            // sv_init has completed
-    int time;                        // will be strictly increasing across level changes
-    int snapFlagServerBit;           // ^= SNAPFLAG_SERVERCOUNT every SV_SpawnServer()
-    client_t *clients;               // [sv_maxclients->integer];
-    int numSnapshotEntities;         // sv_maxclients->integer*PACKET_BACKUP*MAX_PACKET_ENTITIES
-    int nextSnapshotEntities;        // next snapshotEntities to use
-    entityState_t *snapshotEntities; // [numSnapshotEntities]
-    int nextHeartbeatTime;
-    challenge_t challenges[MAX_CHALLENGES]; // to prevent invalid IPs from connecting
-    netadr_t redirectAddress;               // for rcon return messages
-    netadr_t authorizeAddress;              // for rcon return messages
+    qboolean initialized;                   // +0    sv_init has completed
+    int time;                               // +4    will be strictly increasing across level changes
+    int snapFlagServerBit;                  // +8    ^= SNAPFLAG_SERVERCOUNT every SV_SpawnServer()
+    int _padding;                           // +12
+    client_t *clients;                      // +16   [sv_maxclients->integer]
+    int numSnapshotEntities;                // +24   sv_maxclients->integer*PACKET_BACKUP*MAX_PACKET_ENTITIES
+    int nextSnapshotEntities;               // +28   next snapshotEntities to use
+    entityState_t *snapshotEntities;        // +32   [numSnapshotEntities]
+    challenge_t challenges[MAX_CHALLENGES]; // +40   (1024 * 696 = 712,704 bytes)
+    netadr_t redirectAddress;               // +712744
+    netadr_t authorizeAddress;              // +712764
 } serverStatic_t;
 
 typedef struct svEntity_s {
@@ -1184,139 +1204,145 @@ typedef struct {
     int restartTime;
 } server_t;
 
+// playerTeamState_t - 48 bytes, 12 fields.
+// Verified from qagamex64.so build 1069.
 typedef struct {
-    playerTeamStateState_t state;
-    int captures;
-    int basedefense;
-    int carrierdefense;
-    int flagrecovery;
-    int fragcarrier;
-    int assists;
-    int flagruntime;
-    int flagrunrelays;
-    int lasthurtcarrier;
-    int lastreturnedflag;
-    int lastfraggedcarrier;
-} playerTeamState_t;
+    playerTeamStateState_t state; // +0
+    int captures;                 // +4
+    int basedefense;              // +8
+    int carrierdefense;           // +12
+    int flagrecovery;             // +16
+    int fragcarrier;              // +20
+    int assists;                  // +24
+    int flagruntime;              // +28  [QL]
+    int flagrunrelays;            // +32  [QL]
+    int lasthurtcarrier;          // +36
+    int lastreturnedflag;         // +40
+    int lastfraggedcarrier;       // +44
+} playerTeamState_t;              // 48 bytes
 
+// expandedStatObj_t - 812 bytes, 62 fields.
+// Verified from qagamex64.so build 1069 (ClientSpawn copies 812 bytes exactly).
 typedef struct {
-    unsigned int statId;
-    int lastThinkTime;
-    int teamJoinTime;
-    int totalPlayTime;
-    int serverRank;
-    qboolean serverRankIsTied;
-    int teamRank;
-    qboolean teamRankIsTied;
-    int numKills;
-    int numDeaths;
-    int numSuicides;
-    int numTeamKills;
-    int numTeamKilled;
-    int numWeaponKills[16];
-    int numWeaponDeaths[16];
-    int shotsFired[16];
-    int shotsHit[16];
-    int damageDealt[16];
-    int damageTaken[16];
-    int powerups[16];
-    int holdablePickups[7];
-    int weaponPickups[16];
-    int weaponUsageTime[16];
-    int numCaptures;
-    int numAssists;
-    int numDefends;
-    int numHolyShits;
-    int totalDamageDealt;
-    int totalDamageTaken;
-    int previousHealth;
-    int previousArmor;
-    int numAmmoPickups;
-    int numFirstMegaHealthPickups;
-    int numMegaHealthPickups;
-    int megaHealthPickupTime;
-    int numHealthPickups;
-    int numFirstRedArmorPickups;
-    int numRedArmorPickups;
-    int redArmorPickupTime;
-    int numFirstYellowArmorPickups;
-    int numYellowArmorPickups;
-    int yellowArmorPickupTime;
-    int numFirstGreenArmorPickups;
-    int numGreenArmorPickups;
-    int greenArmorPickupTime;
-    int numQuadDamagePickups;
-    int numQuadDamageKills;
-    int numBattleSuitPickups;
-    int numRegenerationPickups;
-    int numHastePickups;
-    int numInvisibilityPickups;
-    int numRedFlagPickups;
-    int numBlueFlagPickups;
-    int numNeutralFlagPickups;
-    int numMedkitPickups;
-    int numArmorPickups;
-    int numDenials;
-    int killStreak;
-    int maxKillStreak;
-    int xp;
-    int domThreeFlagsTime;
-    int numMidairShotgunKills;
-} expandedStatObj_t;
+    unsigned int statId;            // +0
+    int lastThinkTime;              // +4
+    int teamJoinTime;               // +8
+    int totalPlayTime;              // +12
+    int serverRank;                 // +16
+    qboolean serverRankIsTied;      // +20
+    int teamRank;                   // +24
+    qboolean teamRankIsTied;        // +28
+    int numKills;                   // +32
+    int numDeaths;                  // +36
+    int numSuicides;                // +40
+    int numTeamKills;               // +44
+    int numTeamKilled;              // +48
+    int numWeaponKills[16];         // +52   (64 bytes)
+    int numWeaponDeaths[16];        // +116  (64 bytes)
+    int shotsFired[16];             // +180  (64 bytes)
+    int shotsHit[16];               // +244  (64 bytes)
+    int damageDealt[16];            // +308  (64 bytes)
+    int damageTaken[16];            // +372  (64 bytes)
+    int powerups[16];               // +436  (64 bytes)
+    int holdablePickups[7];         // +500  (28 bytes)
+    int weaponPickups[16];          // +528  (64 bytes)
+    int weaponUsageTime[16];        // +592  (64 bytes)
+    int numCaptures;                // +656
+    int numAssists;                 // +660
+    int numDefends;                 // +664
+    int numHolyShits;               // +668
+    int totalDamageDealt;           // +672
+    int totalDamageTaken;           // +676
+    int previousHealth;             // +680
+    int previousArmor;              // +684
+    int numAmmoPickups;             // +688
+    int numFirstMegaHealthPickups;  // +692
+    int numMegaHealthPickups;       // +696
+    int megaHealthPickupTime;       // +700
+    int numHealthPickups;           // +704
+    int numFirstRedArmorPickups;    // +708
+    int numRedArmorPickups;         // +712
+    int redArmorPickupTime;         // +716
+    int numFirstYellowArmorPickups; // +720
+    int numYellowArmorPickups;      // +724
+    int yellowArmorPickupTime;      // +728
+    int numFirstGreenArmorPickups;  // +732
+    int numGreenArmorPickups;       // +736
+    int greenArmorPickupTime;       // +740
+    int numQuadDamagePickups;       // +744
+    int numQuadDamageKills;         // +748
+    int numBattleSuitPickups;       // +752
+    int numRegenerationPickups;     // +756
+    int numHastePickups;            // +760
+    int numInvisibilityPickups;     // +764
+    int numRedFlagPickups;          // +768
+    int numBlueFlagPickups;         // +772
+    int numNeutralFlagPickups;      // +776
+    int numMedkitPickups;           // +780
+    int numArmorPickups;            // +784
+    int numDenials;                 // +788
+    int killStreak;                 // +792
+    int maxKillStreak;              // +796
+    int xp;                         // +800
+    int domThreeFlagsTime;          // +804
+    int numMidairShotgunKills;      // +808
+} expandedStatObj_t;                // 812 bytes
 
 // client data that stays across multiple respawns, but is cleared
 // on each level change or team change at ClientBegin()
+// Total size: 248 bytes. Verified from qagamex64.so build 1069.
 typedef struct __attribute__((aligned(8))) {
-    clientConnected_t connected;
-    usercmd_t cmd;
-    qboolean localClient;
-    qboolean initialSpawn;
-    qboolean predictItemPickup;
-    char netname[40];
-    char country[24];
-    uint64_t steamId;
-    int maxHealth;
-    int voteCount;
-    voteState_t voteState;
-    int complaints;
-    int complaintClient;
-    int complaintEndTime;
-    int damageFromTeammates;
-    int damageToTeammates;
-    qboolean ready;
-    int autoaction;
-    int timeouts;
-    int enterTime;
-    playerTeamState_t teamState;
-    int damageResidual;
-    int inactivityTime;
-    int inactivityWarning;
-    int lastUserinfoUpdate;
-    int userInfoFloodInfractions;
-    int lastMapVoteTime;
-    int lastMapVoteIndex;
-} clientPersistant_t;
+    clientConnected_t connected;  // +0
+    usercmd_t cmd;                // +4    (28 bytes)
+    qboolean localClient;         // +32
+    qboolean initialSpawn;        // +36
+    qboolean predictItemPickup;   // +40
+    char netname[40];             // +44
+    char country[24];             // +84   [QL]
+    uint64_t steamId;             // +112  [QL] (8 bytes, aligned)
+    int maxHealth;                // +120
+    int voteCount;                // +124
+    voteState_t voteState;        // +128  [QL]
+    int complaints;               // +132  [QL]
+    int complaintClient;          // +136  [QL]
+    int complaintEndTime;         // +140  [QL]
+    int damageFromTeammates;      // +144  [QL]
+    int damageToTeammates;        // +148  [QL]
+    qboolean ready;               // +152  [QL]
+    int autoaction;               // +156  [QL]
+    int timeouts;                 // +160  [QL]
+    int enterTime;                // +164
+    playerTeamState_t teamState;  // +168  (48 bytes)
+    int damageResidual;           // +216  [QL]
+    int inactivityTime;           // +220
+    int inactivityWarning;        // +224
+    int lastUserinfoUpdate;       // +228  [QL]
+    int userInfoFloodInfractions; // +232  [QL]
+    int lastMapVoteTime;          // +236  [QL]
+    int lastMapVoteIndex;         // +240  [QL]
+} clientPersistant_t;             // 248 bytes (4 bytes tail padding)
 
 // client data that stays across multiple levels or tournament restarts
 // this is achieved by writing all the data to cvar strings at game shutdown
 // time and reading them back at connection time.  Anything added here
 // MUST be dealt with in G_InitSessionData() / G_ReadSessionData() / G_WriteSessionData()
+// Total size: 56 bytes. Verified from qagamex64.so build 1069.
 typedef struct {
-    team_t sessionTeam;
-    int spectatorTime;
-    spectatorState_t spectatorState;
-    int spectatorClient;
-    int weaponPrimary;
-    int wins;
-    int losses;
-    qboolean teamLeader;
-    privileges_t privileges;
-    int specOnly;
-    int playQueue;
-    qboolean updatePlayQueue;
-    int muted;
-    int prevScore;
-} clientSession_t;
+    team_t sessionTeam;              // +0
+    int spectatorTime;               // +4
+    spectatorState_t spectatorState; // +8
+    int spectatorClient;             // +12
+    int weaponPrimary;               // +16   [QL]
+    int wins;                        // +20
+    int losses;                      // +24
+    qboolean teamLeader;             // +28
+    privileges_t privileges;         // +32   [QL]
+    int specOnly;                    // +36   [QL]
+    int playQueue;                   // +40   [QL]
+    qboolean updatePlayQueue;        // +44   [QL]
+    int muted;                       // +48   [QL]
+    int prevScore;                   // +52   [QL]
+} clientSession_t;                   // 56 bytes
 
 typedef struct gitem_s {
     char *classname;
@@ -1436,77 +1462,83 @@ struct gentity_s {
     int pickupCount;
 };
 
+// raceInfo_t - 552 bytes. Verified from qagamex64.so build 1069.
 typedef struct {
-    qboolean racingActive;
-    int startTime;
-    int lastTime;
-    int best_race[64];
-    int current_race[64];
-    int currentCheckPoint;
-    qboolean weaponUsed;
-    gentity_t *nextRacePoint;
-    gentity_t *nextRacePoint2;
-} raceInfo_t;
+    qboolean racingActive; // +0
+    int startTime;         // +4
+    int lastTime;          // +8
+    int best_race[64];     // +12   (256 bytes)
+    int current_race[64];  // +268  (256 bytes)
+    int currentCheckPoint; // +524
+    qboolean weaponUsed;   // +528
+    // 4 bytes implicit padding for pointer alignment
+    gentity_t *nextRacePoint;  // +536
+    gentity_t *nextRacePoint2; // +544
+} raceInfo_t;                  // 552 bytes
 
-// this structure is cleared on each ClientSpawn(),
-// except for 'client->pers' and 'client->sess'
+// this structure is cleared on each ClientSpawn() via memset(client, 0, 0xBF8),
+// except for 'client->pers' and 'client->sess' which are saved/restored.
+// Total size: 3064 bytes (0xBF8). Verified from qagamex64.so build 1069.
 struct __attribute__((aligned(8))) gclient_s {
-    playerState_t ps;
-    clientPersistant_t pers;
-    clientSession_t sess;
-    qboolean noclip;
-    int lastCmdTime;
-    int buttons;
-    int oldbuttons;
-    int damage_armor;
-    int damage_blood;
-    vec3_t damage_from;
-    qboolean damage_fromWorld;
-    int impressiveCount;
-    int accuracyCount;
-    int accuracy_shots;
-    int accuracy_hits;
-    int lastClientKilled;
-    int lastKilledClient;
-    int lastHurtClient[2];
-    int lastHurtMod[2];
-    int lastHurtTime[2];
-    int lastKillTime;
-    int lastGibTime;
-    int rampageCounter;
-    int revengeCounter[64];
-    int respawnTime;
-    int rewardTime;
-    int airOutTime;
-    qboolean fireHeld;
-    gentity_t *hook;
-    int switchTeamTime;
-    int timeResidual;
-    int timeResidualScout;
-    int timeResidualArmor;
-    int timeResidualHealth;
-    int timeResidualPingPOI;
-    int timeResidualSpecInfo;
-    qboolean healthRegenActive;
-    qboolean armorRegenActive;
-    gentity_t *persistantPowerup;
-    int portalID;
-    int ammoTimes[16];
-    int invulnerabilityTime;
-    expandedStatObj_t expandedStats;
-    int ignoreChatsTime;
-    int lastUserCmdTime;
-    qboolean freezePlayer;
-    int deferredSpawnTime;
-    int deferredSpawnCount;
-    raceInfo_t race;
-    int shotgunDmg[64];
-    int round_shots;
-    int round_hits;
-    int round_damage;
-    qboolean queuedSpectatorFollow;
-    int queuedSpectatorClient;
-};
+    playerState_t ps;          // +0     (592 bytes)
+    clientPersistant_t pers;   // +592   (248 bytes)
+    clientSession_t sess;      // +840   (56 bytes)
+    qboolean noclip;           // +896
+    int lastCmdTime;           // +900
+    int buttons;               // +904
+    int oldbuttons;            // +908
+    int damage_armor;          // +912
+    int damage_blood;          // +916
+    vec3_t damage_from;        // +920
+    qboolean damage_fromWorld; // +932
+    int impressiveCount;       // +936
+    int accuracyCount;         // +940
+    int accuracy_shots;        // +944
+    int accuracy_hits;         // +948
+    int lastClientKilled;      // +952
+    int lastKilledClient;      // +956
+    int lastHurtClient[2];     // +960
+    int lastHurtMod[2];        // +968
+    int lastHurtTime[2];       // +976
+    int lastKillTime;          // +984
+    int lastGibTime;           // +988
+    int rampageCounter;        // +992
+    int revengeCounter[64];    // +996   (256 bytes)
+    int respawnTime;           // +1252
+    int rewardTime;            // +1256
+    int airOutTime;            // +1260
+    qboolean fireHeld;         // +1264
+    // 4 bytes implicit padding for pointer alignment
+    gentity_t *hook;            // +1272
+    int switchTeamTime;         // +1280
+    int timeResidual;           // +1284
+    int timeResidualScout;      // +1288
+    int timeResidualArmor;      // +1292
+    int timeResidualHealth;     // +1296
+    int timeResidualPingPOI;    // +1300
+    int timeResidualSpecInfo;   // +1304
+    qboolean healthRegenActive; // +1308
+    qboolean armorRegenActive;  // +1312
+    // 4 bytes implicit padding for pointer alignment
+    gentity_t *persistantPowerup;    // +1320
+    int portalID;                    // +1328
+    int ammoTimes[16];               // +1332  (64 bytes)
+    int invulnerabilityTime;         // +1396
+    expandedStatObj_t expandedStats; // +1400  (812 bytes)
+    int ignoreChatsTime;             // +2212
+    int lastUserCmdTime;             // +2216
+    qboolean freezePlayer;           // +2220
+    int deferredSpawnTime;           // +2224
+    int deferredSpawnCount;          // +2228
+    raceInfo_t race;                 // +2232  (552 bytes)
+    int shotgunDmg[64];              // +2784  (256 bytes) per-client SG damage accumulator for damage plums
+    int round_shots;                 // +3040
+    int round_hits;                  // +3044
+    int round_damage;                // +3048
+    qboolean queuedSpectatorFollow;  // +3052
+    int queuedSpectatorClient;       // +3056
+    // 4 bytes tail padding (struct alignment to 8-byte boundary)
+}; // 3064 bytes total
 
 typedef struct {
     roundStateState_t eCurrent;
@@ -1634,6 +1666,10 @@ typedef struct __attribute__((aligned(8))) {
     int notifyCvarChangeTime;
     int lastLeadChangeTime;
     int lastLeadChangeClient;
+    int lastLeadChangeElapsedTime;
+    int rrInfectedCounters[4]; // [QL] Red Rover infection tracking per-team
+    int rrInfectedSpreadStart; // [QL] time when infection spread begins
+    int rrSurvivorScoreTimer;  // [QL] timer for survivor score awarding
 } level_locals_t;
 
 // Some extra stuff that's not in the Q3 source. These are the commands you

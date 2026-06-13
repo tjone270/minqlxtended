@@ -682,7 +682,7 @@ static PyObject* PyMinqlxtended_PlayerState(PyObject* self, PyObject* args) {
     }
 
     PyObject* state = PyStructSequence_New(&player_state_type);
-    PyStructSequence_SetItem(state, 0, PyBool_FromLong(g_entities[client_id].client->ps.pm_type == 0));
+    PyStructSequence_SetItem(state, 0, PyBool_FromLong(g_entities[client_id].client->ps.pm_type == PM_NORMAL));
 
     PyObject* pos = PyStructSequence_New(&vector3_type);
     PyStructSequence_SetItem(pos, 0,
@@ -776,7 +776,7 @@ static PyObject* PyMinqlxtended_PlayerState(PyObject* self, PyObject* args) {
                              PyLong_FromLongLong(g_entities[client_id].client->ps.stats[STAT_FLIGHT_REFUEL]));
     PyStructSequence_SetItem(state, 13, flight);
 
-    PyStructSequence_SetItem(state, 14, PyBool_FromLong(g_entities[client_id].client->ps.pm_type == 4));
+    PyStructSequence_SetItem(state, 14, PyBool_FromLong(g_entities[client_id].client->ps.pm_type == PM_FREEZE));
 
     PyObject* keys = PyStructSequence_New(&keys_type);
     for (int i = 0; i < keys_desc.n_in_sequence; i++) {
