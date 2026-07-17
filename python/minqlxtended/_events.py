@@ -229,7 +229,7 @@ class CommandDispatcher(EventDispatcher):
     name = "command"
 
     def dispatch(self, caller, command, args):
-        super().dispatch(caller, command, args)
+        return super().dispatch(caller, command, args)
 
 class ClientCommandDispatcher(EventDispatcher):
     """Event that triggers with any client command. This overlaps with
@@ -243,6 +243,9 @@ class ClientCommandDispatcher(EventDispatcher):
         if ret is False:
             return False
 
+        # A handler may have rewritten the command; handle_return stores the edit
+        # in self.args, so use that rather than the original cmd for matching.
+        cmd = self.args[1]
         ret = minqlxtended.COMMANDS.handle_input(player, cmd, minqlxtended.ClientCommandChannel(player))
         if ret is False:
             return False
@@ -562,8 +565,8 @@ class UserinfoDispatcher(EventDispatcher):
         """Takes a returned dictionary and applies it to the current userinfo."""
         if isinstance(value, dict):
             player, changed = self.args
-            self.args = (player, changed)
-            self.return_value = changed
+            self.args = (player, value)
+            self.return_value = value
         else:
             return super().handle_return(handler, value)
 

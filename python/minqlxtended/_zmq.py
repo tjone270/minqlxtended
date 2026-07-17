@@ -108,17 +108,26 @@ class StatsListener():
                     new_team = stats["DATA"]["KILLER"]["TEAM"].lower()
                     if old_team != new_team:
                         res = minqlxtended.EVENT_DISPATCHERS["team_switch"].dispatch(player, old_team, new_team)
-                        if res is False:
+                        if res is False and player is not None:
                             player.put(old_team)
 
         except zmq.error.Again:
             pass
         except Exception:
             minqlxtended.log_exception()
-            # Reconnect, just in case. GC will clean up for us.
-            self.__init__()
-
-        self.keep_receiving()
+            # Reconnect, just in case. GC will clean up for us. Preserve match
+            # state and never let a failed reconnect escape and kill the poll.
+            in_progress = self._in_progress
+            try:
+                self.__init__()
+                self._in_progress = in_progress
+            except Exception:
+                minqlxtended.log_exception()
+        finally:
+            # Always reschedule (unless stopped) so a transient error can't
+            # permanently stop the stats listener.
+            if not self.done:
+                self.keep_receiving()
 
     def stop(self):
         self.done = True

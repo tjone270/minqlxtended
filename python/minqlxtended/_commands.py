@@ -36,7 +36,7 @@ class Command:
     def __init__(self, plugin, name, handler, permission, channels, exclude_channels, client_cmd_pass, client_cmd_perm, prefix, usage):
         if not (channels is None or hasattr(channels, "__iter__")):
             raise ValueError("'channels' must be a finite iterable or None.")
-        elif not (channels is None or hasattr(exclude_channels, "__iter__")):
+        elif not (exclude_channels is None or hasattr(exclude_channels, "__iter__")):
             raise ValueError("'exclude_channels' must be a finite iterable or None.")
         self.plugin = plugin # Instance of the owner.
 
@@ -258,9 +258,13 @@ class AbstractChannel:
                 i = msg[length:].find(delimiter)
                 if i == -1 or i+length > limit:
                     if not length:
-                        length = limit+1
-                    res.append(msg[:length-1])
-                    msg = msg[length+len(delimiter)-1:]
+                        # No delimiter within the limit: hard-wrap at the limit
+                        # without consuming (dropping) a character.
+                        res.append(msg[:limit])
+                        msg = msg[limit:]
+                    else:
+                        res.append(msg[:length-1])
+                        msg = msg[length+len(delimiter)-1:]
                     break
                 else:
                     length += i+1

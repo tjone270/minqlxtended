@@ -242,7 +242,7 @@ class Game():
 
     @property
     def teamsize(self):
-        return self["teamsize"]
+        return int(self["teamsize"])
 
     @teamsize.setter
     def teamsize(self, new_size):

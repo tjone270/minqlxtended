@@ -29,3 +29,5 @@ bin/*.zip
 .vs/*
 .vscode/*
 bin/minqlxtended-plugins/
+/minqlxtended-plugins
+*.pyc

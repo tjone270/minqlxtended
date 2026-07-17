@@ -266,20 +266,28 @@ class Redis(AbstractDatabase):
 
         """
         
+        # Fast path: the shared default connection already exists, so skip re-reading
+        # the five cvars and rebuilding kwargs on every redis operation.
+        if not host and Redis._conn:
+            return Redis._conn
+
         if not host: # use the configuration defined in CVARs
             address = minqlxtended.get_cvar("qlx_redisAddress")
             unix_socket = bool(int(minqlxtended.get_cvar("qlx_redisUnixSocket")))
             database = int(minqlxtended.get_cvar("qlx_redisDatabase"))
             Redis._pass = minqlxtended.get_cvar("qlx_redisPassword")
             protocol = int(minqlxtended.get_cvar("qlx_redisProtocol"))
-        
+            password = Redis._pass
+        else: # connect to a specific, non-shared database
+            address = host
+
         address = address.split(":")
         connection_kwargs = {
             "unix_socket_path": address[0] if unix_socket else None,
             "host": address[0] if not unix_socket else None,
             "port": int(address[1]) if (not unix_socket) and (len(address) > 1) else 6379,
             "db": database,
-            "password": Redis._pass,
+            "password": password,
             "decode_responses": True
         }
 
@@ -318,7 +326,7 @@ class Redis(AbstractDatabase):
                 self._pool.disconnect()
                 self._pool = None
 
-        if Redis._counter <= 1 and Redis._conn:
+        if Redis._counter <= 0 and Redis._conn:
             Redis._conn = None
             if Redis._pool:
                 Redis._pool.disconnect()

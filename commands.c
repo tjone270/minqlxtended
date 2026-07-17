@@ -33,8 +33,8 @@ void __cdecl Slap(void) {
         return;
     }
     int i = atoi(Cmd_Argv(1));
-    if (i < 0 || i > sv_maxclients->integer) {
-        Com_Printf("client_id must be a number between 0 and %d\n.", sv_maxclients->integer);
+    if (i < 0 || i >= sv_maxclients->integer) {
+        Com_Printf("client_id must be a number between 0 and %d\n.", sv_maxclients->integer - 1);
         return;
     } else if (argc > 2) {
         dmg = atoi(Cmd_Argv(2));
@@ -68,8 +68,8 @@ void __cdecl Slay(void) {
         return;
     }
     int i = atoi(Cmd_Argv(1));
-    if (i < 0 || i > sv_maxclients->integer) {
-        Com_Printf("client_id must be a number between 0 and %d\n.", sv_maxclients->integer);
+    if (i < 0 || i >= sv_maxclients->integer) {
+        Com_Printf("client_id must be a number between 0 and %d\n.", sv_maxclients->integer - 1);
         return;
     } else if (g_entities[i].inuse && g_entities[i].health > 0) {
         Com_Printf("Slaying player...\n");
@@ -99,8 +99,8 @@ void __cdecl StopFollowing(void) {
     }
 
     int i = atoi(Cmd_Argv(1));
-    if (i < 0 || i > sv_maxclients->integer) {
-        Com_Printf("client_id must be a number between 0 and %d\n.", sv_maxclients->integer);
+    if (i < 0 || i >= sv_maxclients->integer) {
+        Com_Printf("client_id must be a number between 0 and %d\n.", sv_maxclients->integer - 1);
         return;
     }
 

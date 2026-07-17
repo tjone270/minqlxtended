@@ -23,8 +23,12 @@ char* ClientCommandDispatcher(int client_id, char* cmd) {
     } else if (PyBool_Check(result) && result == Py_False) {
         ret = NULL;
     } else if (PyUnicode_Check(result)) {
-        strncpy(ccmd_buf, PyUnicode_AsUTF8(result), sizeof(ccmd_buf));
-        ret = ccmd_buf;
+        const char* s = PyUnicode_AsUTF8(result);
+        if (s) {
+            strncpy(ccmd_buf, s, sizeof(ccmd_buf) - 1);
+            ccmd_buf[sizeof(ccmd_buf) - 1] = '\0';
+            ret = ccmd_buf;
+        }
     }
 
     Py_XDECREF(cmd_string);
@@ -52,8 +56,12 @@ char* ServerCommandDispatcher(int client_id, char* cmd) {
     } else if (PyBool_Check(result) && result == Py_False) {
         ret = NULL;
     } else if (PyUnicode_Check(result)) {
-        strncpy(scmd_buf, PyUnicode_AsUTF8(result), sizeof(scmd_buf));
-        ret = scmd_buf;
+        const char* s = PyUnicode_AsUTF8(result);
+        if (s) {
+            strncpy(scmd_buf, s, sizeof(scmd_buf) - 1);
+            scmd_buf[sizeof(scmd_buf) - 1] = '\0';
+            ret = scmd_buf;
+        }
     }
 
     Py_XDECREF(cmd_string);
@@ -98,8 +106,12 @@ char* ClientConnectDispatcher(int client_id, int is_bot) {
     } else if (PyBool_Check(result) && result == Py_False) {
         ret = "You are banned from this server.";
     } else if (PyUnicode_Check(result)) {
-        strncpy(connect_buf, PyUnicode_AsUTF8(result), sizeof(connect_buf));
-        ret = connect_buf;
+        const char* s = PyUnicode_AsUTF8(result);
+        if (s) {
+            strncpy(connect_buf, s, sizeof(connect_buf) - 1);
+            connect_buf[sizeof(connect_buf) - 1] = '\0';
+            ret = connect_buf;
+        }
     }
 
     Py_XDECREF(result);
@@ -195,8 +207,12 @@ char* SetConfigstringDispatcher(int index, char* value) {
     } else if (PyBool_Check(result) && result == Py_False) {
         ret = NULL;
     } else if (PyUnicode_Check(result)) {
-        strncpy(setcs_buf, PyUnicode_AsUTF8(result), sizeof(setcs_buf));
-        ret = setcs_buf;
+        const char* s = PyUnicode_AsUTF8(result);
+        if (s) {
+            strncpy(setcs_buf, s, sizeof(setcs_buf) - 1);
+            setcs_buf[sizeof(setcs_buf) - 1] = '\0';
+            ret = setcs_buf;
+        }
     }
 
     Py_XDECREF(value_string);
@@ -242,8 +258,12 @@ char* ConsolePrintDispatcher(char* text) {
     } else if (PyBool_Check(result) && result == Py_False) {
         ret = NULL;
     } else if (PyUnicode_Check(result)) {
-        strncpy(print_buf, PyUnicode_AsUTF8(result), sizeof(print_buf));
-        ret = print_buf;
+        const char* s = PyUnicode_AsUTF8(result);
+        if (s) {
+            strncpy(print_buf, s, sizeof(print_buf) - 1);
+            print_buf[sizeof(print_buf) - 1] = '\0';
+            ret = print_buf;
+        }
     }
 
     Py_XDECREF(text_string);

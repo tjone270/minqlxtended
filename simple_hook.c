@@ -8,12 +8,14 @@
 #if defined(__x86_64__) || defined(_M_X64)
 typedef uint64_t pint;
 typedef int64_t sint;
-#define WORST_CASE 42
+// Must be >= the MEMORY_SLOT_SIZE used by trampoline.c (relocated body up to
+// TRAMPOLINE_MAX_SIZE plus a JMP_ABS relay), else adjacent slots overlap.
+#define WORST_CASE 64
 #define JUMP_SIZE sizeof(JMP_ABS)
 #elif defined(__i386) || defined(_M_IX86)
 typedef uint32_t pint;
 typedef int32_t sint;
-#define WORST_CASE 29
+#define WORST_CASE 32
 #define JUMP_SIZE sizeof(JMP_REL)
 #endif
 
@@ -26,6 +28,9 @@ static int last_trmp = 0; // trmp[TRMPS_ARRAY_SIZE]
 static void initializeTrampolines(void) {
     trmps = mmap(NULL, (WORST_CASE * TRMPS_ARRAY_SIZE),
                  PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (trmps == MAP_FAILED) {
+        trmps = NULL; // Keep the !trmps guard meaningful and allow a later retry.
+    }
 }
 
 int Hook(void* target, void* replacement, void** func_ptr) {
@@ -35,6 +40,9 @@ int Hook(void* target, void* replacement, void** func_ptr) {
     // Check if our trampoline pool has been initialized. If not, do so.
     if (!trmps) {
         initializeTrampolines();
+        if (!trmps) {
+            return -12; // mmap failed; cannot allocate trampoline pool.
+        }
     } else { // TODO: Implement a way to add and remove hooks.
         if (last_trmp + 1 > TRMPS_ARRAY_SIZE) {
             return -3;
@@ -55,7 +63,12 @@ int Hook(void* target, void* replacement, void** func_ptr) {
     if (page_size == -1) {
         return errno;
     }
-    res = mprotect((void*)((pint)target & ~(page_size - 1)), page_size, PROT_READ | PROT_WRITE | PROT_EXEC);
+    // The prologue patch (JMP + NOP padding) writes `difference` bytes from target
+    // and may straddle a page boundary, so protect every page the write touches.
+    int difference     = ct.oldIPs[ct.nIP - 1];
+    pint protect_start = (pint)target & ~(pint)(page_size - 1);
+    pint protect_end   = ((pint)target + difference + page_size - 1) & ~(pint)(page_size - 1);
+    res = mprotect((void*)protect_start, protect_end - protect_start, PROT_READ | PROT_WRITE | PROT_EXEC);
     if (res) {
         return errno;
     }
@@ -72,7 +85,6 @@ int Hook(void* target, void* replacement, void** func_ptr) {
     pJmp->operand = (pint)replacement - ((pint)target + sizeof(JMP_REL));
 #endif
 
-    int difference = ct.oldIPs[ct.nIP - 1];
     for (int i = JUMP_SIZE; i < difference; i++) {
         *((uint8_t*)target + i) = NOP;
     }

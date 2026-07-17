@@ -11,20 +11,19 @@
  *
  * Returns -1 if no flag is set, so use it in a loop until it does so. */
 int GetPendingPlayer(uint64_t* players) {
-    int flag = -1;
     // We first check if any bitfield is set.
     if (!*players) {
-        return flag;
-    } else {
-        for (int id = 0; id < 64; id++) {
-            // Check bit i's flag.
-            flag = *players & (1LL << id);
-            // Remove the flag we checked, if present.
-            *players &= ~flag;
-            // If the flag was set, return client id.
-            if (flag) {
-                return id;
-            }
+        return -1;
+    }
+
+    for (int id = 0; id < 64; id++) {
+        // Check bit id's flag. Must be 64-bit wide: ids 32..63 live above bit 31.
+        uint64_t flag = *players & (1ULL << id);
+        // Remove the flag we checked, if present.
+        *players &= ~flag;
+        // If the flag was set, return client id.
+        if (flag) {
+            return id;
         }
     }
 
@@ -47,7 +46,9 @@ float RandomFloatWithNegative(void) {
 }
 
 void* PatternSearch(void* address, size_t length, const char* pattern, const char* mask) {
-    for (size_t i = 0; i < length; i++) {
+    size_t masklen = strlen(mask);
+    // Stop before the pattern would run past the end of the region.
+    for (size_t i = 0; i + masklen <= length; i++) {
         for (size_t j = 0; mask[j]; j++) {
             if (mask[j] == 'X' && pattern[j] != ((char*)address)[i + j]) {
                 break;

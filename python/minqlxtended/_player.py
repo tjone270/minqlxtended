@@ -254,7 +254,7 @@ class Player:
     @autohop.setter
     def autohop(self, value):
         new = self.cvars
-        new["autohop"] = int(value)
+        new["cg_autoHop"] = int(value)
         self.cvars = new
 
     @property
@@ -410,7 +410,9 @@ class Player:
         elif new_weapon in minqlxtended.WEAPONS:
             pass
         elif new_weapon in minqlxtended.WEAPONS.values():
-            new_weapon = tuple(minqlxtended.WEAPONS.values()).index(new_weapon)
+            # WEAPONS keys are 1-based; map the name back to its key rather than
+            # using the 0-based list index (which selects the wrong weapon).
+            new_weapon = {v: k for k, v in minqlxtended.WEAPONS.items()}[new_weapon]
 
         return minqlxtended.set_weapon(self.id, new_weapon)
 

@@ -114,7 +114,7 @@ void __cdecl My_SV_SendServerCommand(client_t* cl, char* fmt, ...) {
         return;
     }
 
-    SV_SendServerCommand(cl, res);
+    SV_SendServerCommand(cl, "%s", res);
 }
 
 void __cdecl My_SV_ClientEnterWorld(client_t* client, usercmd_t* cmd) {
@@ -165,7 +165,7 @@ void __cdecl My_Com_Printf(char* fmt, ...) {
     char* res = ConsolePrintDispatcher(buf);
     // NULL means stop the event.
     if (res) {
-        Com_Printf(buf);
+        Com_Printf("%s", res);
     }
 }
 

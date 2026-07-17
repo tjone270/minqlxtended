@@ -50,6 +50,19 @@ def handle_rcon(cmd):
         minqlxtended.log_exception()
         return True
 
+def handle_console_command(cmd):
+    """Console commands registered from Python via ``add_console_command()`` (and
+    the built-in ``pycmd`` command) are routed here by the engine. They are
+    processed as regular pyminqlxtended commands as if the owner executes them,
+    mirroring :func:`handle_rcon`.
+
+    """
+    try:
+        minqlxtended.COMMANDS.handle_input(minqlxtended.RconDummyPlayer(), cmd, minqlxtended.CONSOLE_CHANNEL)
+    except:
+        minqlxtended.log_exception()
+        return True
+
 def handle_client_command(client_id, cmd):
     """Client commands are commands such as "say", "say_team", "scores",
     "disconnect" and so on. This function parses those and passes it
@@ -234,8 +247,10 @@ def handle_new_game(is_restart):
     # minqlxtended stuff that needs QLDS to be initialized.
     global _first_game
     if _first_game:
-        minqlxtended.late_init()
+        # Clear the flag first so a failure inside late_init isn't retried on every
+        # subsequent new_game (which would re-run non-idempotent setup).
         _first_game = False
+        minqlxtended.late_init()
 
         # A good place to warn the owner if ZMQ stats are disabled.
         global _zmq_warning_issued
@@ -282,12 +297,12 @@ def handle_set_configstring(index, value):
             vote = cmd[0] if cmd else ""
             args = " ".join(cmd[1:]) if len(cmd) > 1 else ""
             minqlxtended.EVENT_DISPATCHERS["vote_started"].dispatch(vote, args)
-            return
+            return value
         # GAME STATE CHANGES
         elif index == 0:
             old_cs = minqlxtended.parse_variables(minqlxtended.get_configstring(index))
             if not old_cs:
-                return
+                return value
 
             new_cs = minqlxtended.parse_variables(value)
             old_state = old_cs["g_gameState"]
@@ -315,7 +330,7 @@ def handle_set_configstring(index, value):
                 if "turn" in cvars:
                     # it is A&D
                     if int(cvars["state"]) == 0:
-                        return
+                        return value
                     # round cvar appears only on round countdown
                     # and first round is 0, not 1
                     try:
@@ -329,10 +344,10 @@ def handle_set_configstring(index, value):
 
                 if round_number and "time" in cvars:
                     minqlxtended.EVENT_DISPATCHERS["round_countdown"].dispatch(round_number)
-                    return
+                    return value
                 elif round_number:
                     minqlxtended.EVENT_DISPATCHERS["round_start"].dispatch(round_number)
-                    return
+                    return value
 
         return res
     except:
@@ -497,6 +512,7 @@ def redirect_print(channel):
 
 def register_handlers():
     minqlxtended.register_handler("rcon", handle_rcon)
+    minqlxtended.register_handler("custom_command", handle_console_command)
     minqlxtended.register_handler("client_command", handle_client_command)
     minqlxtended.register_handler("server_command", handle_server_command)
     minqlxtended.register_handler("frame", handle_frame)

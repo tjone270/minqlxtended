@@ -146,6 +146,15 @@ def _configure_logger():
     logger = logging.getLogger("minqlxtended")
     logger.setLevel(logging.DEBUG)
 
+    # Idempotent: drop any handlers left by a previous (possibly failed) init so we
+    # don't stack duplicate file/console handlers if late_init runs more than once.
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
+
     # File
     file_path = os.path.join(minqlxtended.get_cvar("fs_homepath"), "minqlxtended.log")
     maxlogs = minqlxtended.Plugin.get_cvar("qlx_logs", int)
@@ -204,12 +213,14 @@ def owner():
     """Returns the SteamID64 of the owner. This is set in the config."""
     try:
         sid = int(minqlxtended.get_cvar("qlx_owner"))
-        if sid == -1:
-            raise RuntimeError
-        return sid
-    except:
+    except (ValueError, TypeError):
         logger = minqlxtended.get_logger()
         logger.error("Failed to parse the Owner Steam ID. Make sure it's in SteamID64 format.")
+        return None
+    # -1 is the default sentinel meaning "no owner configured"; not an error.
+    if sid == -1:
+        return None
+    return sid
 
 
 _stats = None
@@ -387,9 +398,14 @@ def load_preset_plugins():
     plugins_dir = os.path.basename(plugins_path)
 
     if os.path.isdir(plugins_path):
-        plugins = [p for p in plugins if "{}.{}".format(plugins_dir, p)]
+        plugins = [p for p in plugins if "{}.{}".format(plugins_dir, p) not in sys.modules]
         for p in plugins:
-            load_plugin(p)
+            # Isolate per-plugin failures so one bad preset plugin doesn't abort the
+            # rest of the load (and, via late_init, cause it to be retried on every map).
+            try:
+                load_plugin(p)
+            except Exception:
+                log_exception()
     else:
         raise (PluginLoadError("Cannot find the plugins directory '{}'.".format(os.path.abspath(plugins_path))))
 

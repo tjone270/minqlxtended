@@ -289,17 +289,22 @@ static PyObject* PyMinqlxtended_PlayerInfo(PyObject* self, PyObject* args) {
 
 static PyObject* PyMinqlxtended_PlayersInfo(PyObject* self, PyObject* args) {
     PyObject* ret = PyList_New(sv_maxclients->integer);
+    if (!ret) {
+        return NULL;
+    }
 
     for (int i = 0; i < sv_maxclients->integer; i++) {
         if (svs->clients[i].state == CS_FREE) {
+            Py_INCREF(Py_None);
             if (PyList_SetItem(ret, i, Py_None) == -1) {
+                Py_DECREF(ret);
                 return NULL;
             }
-            Py_INCREF(Py_None);
             continue;
         }
 
         if (PyList_SetItem(ret, i, makePlayerTuple(i)) == -1) {
+            Py_DECREF(ret);
             return NULL;
         }
     }
@@ -495,16 +500,21 @@ static PyObject* PyMinqlxtended_Kick(PyObject* self, PyObject* args) {
             PyErr_Format(PyExc_ValueError,
                          "client_id must be None or the ID of an active player.");
             return NULL;
-        } else if (reason == Py_None || (PyUnicode_Check(reason) && PyUnicode_AsUTF8(reason)[0] == 0)) {
-            // Default kick message for None or empty strings.
+        } else if (reason == Py_None) {
+            // Default kick message for None.
             My_SV_DropClient(&svs->clients[i], "was kicked.");
         } else if (PyUnicode_Check(reason)) {
-            My_SV_DropClient(&svs->clients[i], PyUnicode_AsUTF8(reason));
+            const char* reason_str = PyUnicode_AsUTF8(reason);
+            if (!reason_str) {
+                return NULL; // Propagate the encoding error (e.g. lone surrogates).
+            }
+            // Default kick message for empty strings.
+            My_SV_DropClient(&svs->clients[i], reason_str[0] == 0 ? "was kicked." : reason_str);
         }
     } else {
         PyErr_Format(PyExc_ValueError,
                      "client_id needs to be a number from 0 to %d, or None.",
-                     sv_maxclients->integer);
+                     sv_maxclients->integer - 1);
         return NULL;
     }
 
@@ -541,10 +551,10 @@ static PyObject* PyMinqlxtended_GetConfigstring(PyObject* self, PyObject* args) 
         return NULL;
     }
 
-    else if (i < 0 || i > MAX_CONFIGSTRINGS) {
+    else if (i < 0 || i >= MAX_CONFIGSTRINGS) {
         PyErr_Format(PyExc_ValueError,
                      "index needs to be a number from 0 to %d.",
-                     MAX_CONFIGSTRINGS);
+                     MAX_CONFIGSTRINGS - 1);
         return NULL;
     }
 
@@ -565,10 +575,10 @@ static PyObject* PyMinqlxtended_SetConfigstring(PyObject* self, PyObject* args) 
         return NULL;
     }
 
-    else if (i < 0 || i > MAX_CONFIGSTRINGS) {
+    else if (i < 0 || i >= MAX_CONFIGSTRINGS) {
         PyErr_Format(PyExc_ValueError,
                      "index needs to be a number from 0 to %d.",
-                     MAX_CONFIGSTRINGS);
+                     MAX_CONFIGSTRINGS - 1);
         return NULL;
     }
 
@@ -780,11 +790,8 @@ static PyObject* PyMinqlxtended_PlayerState(PyObject* self, PyObject* args) {
 
     PyObject* keys = PyStructSequence_New(&keys_type);
     for (int i = 0; i < keys_desc.n_in_sequence; i++) {
-        if (g_entities[client_id].client->ps.stats[STAT_KEY] & (1 << i)) {
-            PyStructSequence_SetItem(keys, i, Py_True);
-        } else {
-            PyStructSequence_SetItem(keys, i, Py_False);
-        }
+        PyStructSequence_SetItem(keys, i,
+                                 PyBool_FromLong(g_entities[client_id].client->ps.stats[STAT_KEY] & (1 << i)));
     }
     PyStructSequence_SetItem(state, 15, keys);
 
@@ -866,6 +873,9 @@ static PyObject* PyMinqlxtended_SetStats(PyObject* self, PyObject* args) {
     g_entities[client_id].client->expandedStats.totalDamageTaken =
         (int)PyLong_AsLong(PyStructSequence_GetItem(new_player_stats, 4));
 
+    if (PyErr_Occurred()) {
+        return NULL; // A non-integer field left a pending exception.
+    }
 
     // of course, we don't set ping or time.
 
@@ -903,6 +913,10 @@ static PyObject* PyMinqlxtended_SetPosition(PyObject* self, PyObject* args) {
     g_entities[client_id].client->ps.origin[2] =
         (float)PyFloat_AsDouble(PyStructSequence_GetItem(new_position, 2));
 
+    if (PyErr_Occurred()) {
+        return NULL; // A non-numeric field left a pending exception.
+    }
+
     Py_RETURN_TRUE;
 }
 
@@ -936,6 +950,10 @@ static PyObject* PyMinqlxtended_SetVelocity(PyObject* self, PyObject* args) {
         (float)PyFloat_AsDouble(PyStructSequence_GetItem(new_velocity, 1));
     g_entities[client_id].client->ps.velocity[2] =
         (float)PyFloat_AsDouble(PyStructSequence_GetItem(new_velocity, 2));
+
+    if (PyErr_Occurred()) {
+        return NULL; // A non-numeric field left a pending exception.
+    }
 
     Py_RETURN_TRUE;
 }
@@ -1358,7 +1376,7 @@ static PyObject* PyMinqlxtended_DropHoldable(PyObject* self, PyObject* args) {
     g_entities[client_id].client->ps.eFlags &= ~EF_KAMIKAZE;
 
     item = g_entities[client_id].client->ps.stats[STAT_HOLDABLE_ITEM];
-    if (item == 0) {
+    if (item < 1 || item >= bg_numItems) {
         Py_RETURN_FALSE;
     }
 
@@ -1517,8 +1535,10 @@ static PyObject* PyMinqlxtended_Callvote(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    strncpy(level->voteString, vote, sizeof(level->voteString));
-    strncpy(level->voteDisplayString, vote_disp, sizeof(level->voteDisplayString));
+    strncpy(level->voteString, vote, sizeof(level->voteString) - 1);
+    level->voteString[sizeof(level->voteString) - 1] = '\0';
+    strncpy(level->voteDisplayString, vote_disp, sizeof(level->voteDisplayString) - 1);
+    level->voteDisplayString[sizeof(level->voteDisplayString) - 1] = '\0';
     level->voteTime = (level->time - 30000) + vote_time * 1000;
     level->voteYes  = 0;
     level->voteNo   = 0;
@@ -1884,10 +1904,10 @@ static PyObject* PyMinqlxtended_DevPrintItems(PyObject* self, PyObject* args) {
 
         if (is_buffer_enough == qfalse) {
             Com_Printf(format, i, ent->classname);
+        } else {
+            chars_written = snprintf(&buffer[buffer_index], sizeof(buffer) - buffer_index, format, i, ent->classname);
+            buffer_index += chars_written;
         }
-
-        chars_written = sprintf(&buffer[buffer_index], format, i, ent->classname);
-        buffer_index += chars_written;
     }
 
     if (is_buffer_enough) {
@@ -2057,8 +2077,10 @@ static PyObject* PyMinqlxtended_InitModule(void) {
 
 // Set IS_DEBUG.
 #ifndef NDEBUG
+    Py_INCREF(Py_True); // PyModule_AddObject steals a reference on success.
     PyModule_AddObject(module, "DEBUG", Py_True);
 #else
+    Py_INCREF(Py_False); // PyModule_AddObject steals a reference on success.
     PyModule_AddObject(module, "DEBUG", Py_False);
 #endif
 
@@ -2201,8 +2223,7 @@ PyMinqlxtended_InitStatus_t PyMinqlxtended_Initialize(void) {
         DebugPrint("PyRun_String() returned NULL. Did you modify the loader?\n");
         return PYM_MAIN_SCRIPT_ERROR;
     }
-    PyObject* ret = PyDict_GetItemString(main_dict, "ret");
-    Py_XDECREF(ret);
+    PyObject* ret = PyDict_GetItemString(main_dict, "ret"); // Borrowed reference; do not decref.
     Py_DECREF(res);
     if (ret == NULL) {
         DebugPrint("The loader script return value doesn't exist?\n");

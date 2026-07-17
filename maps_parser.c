@@ -4,7 +4,7 @@
 
 #include "maps_parser.h"
 
-const char fmt[] = ("%" SCNxPTR "-%" SCNxPTR " %s %x %x:%x %u %[^\n]");
+const char fmt[] = ("%" SCNxPTR "-%" SCNxPTR " %31s %x %x:%x %u %4095[^\n]");
 
 /*
  * Pass it a module_info_t pointer with its name initialized, get it full of info back.
@@ -24,6 +24,11 @@ int GetModuleInfo(module_info_t* module_info) {
     }
 
     FILE* fp = fopen("/proc/self/maps", "r");
+    if (!fp) {
+        return -3;
+    }
+
+    size_t max_entries = sizeof(module_info->address_start) / sizeof(module_info->address_start[0]);
     while (fgets(linebuf, sizeof(linebuf), fp) != 0) {
         sscanf(linebuf, fmt, &start, &end, flags, &file_offset, &dev_major, &dev_minor, &inode, path);
 
@@ -54,11 +59,17 @@ int GetModuleInfo(module_info_t* module_info) {
         // are different, but have the same filename.
         // TODO: Add option to pass the path instead of name to avoid this.
         if (ret && strcmp(path, module_info->path)) {
+            fclose(fp);
             return -2;
         }
 
         if (!ret) { // Only once.
             strcpy(module_info->path, path);
+        }
+
+        // Stop before overflowing the fixed-size entry arrays.
+        if ((size_t)ret >= max_entries) {
+            break;
         }
 
         // Addresses

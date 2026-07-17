@@ -146,9 +146,18 @@ class Plugin:
             self._commands = []
             return
 
-        for cmd in self._commands:
-            if cmd.name == name and cmd.handler == handler:
+        # Command.name is always stored as a list, so normalise the argument the
+        # same way Command.__init__ does before comparing (callers pass a string
+        # or a list, mirroring add_command).
+        if isinstance(name, (list, tuple)):
+            names = [n.lower() for n in name]
+        else:
+            names = [name]
+
+        for cmd in self._commands[:]:
+            if cmd.name == names and cmd.handler == handler:
                 minqlxtended.COMMANDS.remove_command(cmd)
+                self._commands.remove(cmd)
 
     @classmethod
     def get_cvar(cls, name, return_type=str):
@@ -220,7 +229,7 @@ class Plugin:
 
         """
         if cls.get_cvar(name) is None:
-            minqlxtended.set_cvar(name, value, flags)
+            minqlxtended.set_cvar_limit(name, value, minimum, maximum, flags)
             return True
         else:
             minqlxtended.console_command('{} "{}"'.format(name, value))
@@ -337,7 +346,7 @@ class Plugin:
 
         clean = cls.clean_text(name).lower()
         for p in players:
-            if p.clean_text.lower() == clean:
+            if p.clean_name.lower() == clean:
                 return p.name
 
         return None
