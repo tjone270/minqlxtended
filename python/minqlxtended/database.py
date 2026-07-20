@@ -283,13 +283,18 @@ class Redis(AbstractDatabase):
 
         address = address.split(":")
         connection_kwargs = {
-            "unix_socket_path": address[0] if unix_socket else None,
-            "host": address[0] if not unix_socket else None,
-            "port": int(address[1]) if (not unix_socket) and (len(address) > 1) else 6379,
             "db": database,
             "password": password,
             "decode_responses": True
         }
+        # Only pass transport-specific kwargs for the transport actually in use.
+        # redis-py>=5 forwards these straight to the connection class, and a TCP
+        # Connection rejects unix_socket_path (and vice versa).
+        if unix_socket:
+            connection_kwargs["unix_socket_path"] = address[0]
+        else:
+            connection_kwargs["host"] = address[0]
+            connection_kwargs["port"] = int(address[1]) if len(address) > 1 else 6379
 
         if redis.VERSION >= (5, 0, 0): # redis-py>=5.0.0 supports specifying the protocol and deprecates StrictRedis
             connection_kwargs["protocol"] = protocol
