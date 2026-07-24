@@ -1539,9 +1539,9 @@ static PyObject* PyMinqlxtended_Callvote(PyObject* self, PyObject* args) {
     level->voteString[sizeof(level->voteString) - 1] = '\0';
     strncpy(level->voteDisplayString, vote_disp, sizeof(level->voteDisplayString) - 1);
     level->voteDisplayString[sizeof(level->voteDisplayString) - 1] = '\0';
-    level->voteTime = (level->time - 30000) + vote_time * 1000;
-    level->voteYes  = 0;
-    level->voteNo   = 0;
+    level->voteTime                                                = (level->time - 30000) + vote_time * 1000;
+    level->voteYes                                                 = 0;
+    level->voteNo                                                  = 0;
 
     for (int i = 0; i < sv_maxclients->integer; i++) {
         if (g_entities[i].client) {
@@ -2207,12 +2207,19 @@ PyMinqlxtended_InitStatus_t PyMinqlxtended_Initialize(void) {
     }
 
     DebugPrint("Initializing Python...\n");
-    Py_SetProgramName(PYTHON_FILENAME);
-    PyImport_AppendInittab("_minqlxtended", &PyMinqlxtended_InitModule);
-    Py_Initialize();
-#if PY_VERSION_HEX < ((3 << 24) | (7 << 16))
-    PyEval_InitThreads();
-#endif
+    PyImport_AppendInittab("_minqlxtended", &PyMinqlxtended_InitModule); // must precede initialisation
+
+    PyConfig config;
+    PyConfig_InitPythonConfig(&config);
+    PyStatus status = PyConfig_SetString(&config, &config.program_name, PYTHON_FILENAME);
+    if (!PyStatus_Exception(status)) {
+        status = Py_InitializeFromConfig(&config);
+    }
+    PyConfig_Clear(&config);
+    if (PyStatus_Exception(status)) {
+        DebugPrint("Py_InitializeFromConfig() failed: %s\n", status.err_msg ? status.err_msg : "unknown error");
+        return PYM_PY_INIT_ERROR;
+    }
 
     // Add the main module.
     PyObject* main_module = PyImport_AddModule("__main__");
