@@ -13,11 +13,11 @@ endif
 
 BINDIR = bin
 CC = gcc
-CFLAGS += -shared -std=gnu11
+CFLAGS += -shared -std=gnu11 -pthread
 LDFLAGS_NOPY += -ldl
 LDFLAGS += $(shell (python3-config --libs --embed || python3-config --libs) | grep lpython)
-SOURCES_NOPY += dllmain.c commands.c simple_hook.c hooks.c misc.c maps_parser.c trampoline.c patches.c
-SOURCES += dllmain.c commands.c python_embed.c python_dispatchers.c simple_hook.c hooks.c misc.c maps_parser.c trampoline.c patches.c
+SOURCES_NOPY += dllmain.c commands.c simple_hook.c hooks.c misc.c maps_parser.c trampoline.c patches.c demos.c
+SOURCES += dllmain.c commands.c python_embed.c python_dispatchers.c simple_hook.c hooks.c misc.c maps_parser.c trampoline.c patches.c demos.c
 OBJS = $(SOURCES:.c=.o)
 OBJS_DEBUG = $(SOURCES:.c=.o)
 OBJS_NOPY = $(SOURCES_NOPY:.c=.o)
@@ -30,7 +30,7 @@ PYFILES = $(wildcard python/minqlxtended/*.py)
 
 .PHONY: depend clean
 
-all: CFLAGS += $(shell python3-config --includes)
+all: CFLAGS += $(shell python3-config --includes) -O2 -Wall
 all: VERSION := MINQLXTENDED_VERSION=\"$(shell python3 python/version.py)\"
 all: $(OUTPUT) $(PYMODULE)
 	@echo Done!
@@ -40,7 +40,7 @@ debug: VERSION := MINQLXTENDED_VERSION=\"$(shell python3 python/version.py -d)\"
 debug: $(OUTPUT_DEBUG) $(PYMODULE_DEBUG)
 	@echo Done!
 
-nopy: CFLAGS += -Wall -DNOPY
+nopy: CFLAGS += -Wall -DNOPY -O2
 nopy: VERSION := MINQLXTENDED_VERSION=\"$(shell git describe --long --tags --dirty --always)-nopy\"
 nopy: $(OUTPUT_NOPY)
 	@echo Done!
@@ -51,7 +51,7 @@ nopy_debug: $(OUTPUT_NOPY)
 	@echo Done!
 
 $(OUTPUT): $(OBJS)
-	$(CC) $(CFLAGS) -O1 -D$(VERSION) -o $(OUTPUT) $(OBJS) $(LDFLAGS)
+	$(CC) $(CFLAGS) -D$(VERSION) -o $(OUTPUT) $(OBJS) $(LDFLAGS)
 
 $(OUTPUT_DEBUG): $(OBJS_DEBUG)
 	$(CC) $(CFLAGS) -D$(VERSION) -o $(OUTPUT_DEBUG) $(OBJS_DEBUG) $(LDFLAGS)
