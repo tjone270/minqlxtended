@@ -177,17 +177,21 @@ def handle_client_command(client_id, cmd):
 
 def handle_server_command(client_id, cmd):
     try:
-        # Dispatch the "server_command" event before further processing.
-        try:
-            player = minqlxtended.Player(client_id) if client_id >= 0 else None
-        except minqlxtended.NonexistentPlayerError:
-            return True
+        # Dispatch the "server_command" event before further processing. This handler runs
+        # for every server command sent, so skip the Player construction (a C player_info
+        # call) entirely while nothing hooks the event.
+        dispatcher = minqlxtended.EVENT_DISPATCHERS["server_command"]
+        if dispatcher._handler_chain:
+            try:
+                player = minqlxtended.Player(client_id) if client_id >= 0 else None
+            except minqlxtended.NonexistentPlayerError:
+                return True
 
-        retval = minqlxtended.EVENT_DISPATCHERS["server_command"].dispatch(player, cmd)
-        if retval is False:
-            return False
-        elif isinstance(retval, str):
-            cmd = retval
+            retval = dispatcher.dispatch(player, cmd)
+            if retval is False:
+                return False
+            elif isinstance(retval, str):
+                cmd = retval
 
         res = _re_vote_ended.match(cmd)
         if res:

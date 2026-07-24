@@ -37,6 +37,7 @@ class EventDispatcher:
         self.name = type(self).name
         self.need_zmq_enabled = type(self).need_zmq_stats_enabled
         self.plugins = {}
+        self._handler_chain = ()
 
     def dispatch(self, *args, **kwargs):
         """Calls all the handlers that have been registered when hooking this event.
@@ -64,38 +65,48 @@ class EventDispatcher:
         # is returned, we pass it on to handle_return.
         self.args = args
         self.kwargs = kwargs
-        logger = minqlxtended.get_logger()
         # Log the events as they come in.
         if self.name not in self.no_debug:
+            logger = minqlxtended.get_logger()
             dbgstr = "{}{}".format(self.name, args)
             if len(dbgstr) > 100:
                 dbgstr = dbgstr[0:99] + ")"
             logger.debug(dbgstr)
 
-        plugins = self.plugins.copy()
         self.return_value = True
-        for i in range(5):
-            for plugin in plugins:
-                for handler in plugins[plugin][i]:
-                    try:
-                        res = handler(*self.args, **self.kwargs)
-                        if res == minqlxtended.RET_NONE or res is None:
-                            continue
-                        elif res == minqlxtended.RET_STOP:
-                            return True
-                        elif res == minqlxtended.RET_STOP_EVENT:
-                            self.return_value = False
-                        elif res == minqlxtended.RET_STOP_ALL:
-                            return False
-                        else: # Got an unknown return value.
-                            return_handler = self.handle_return(handler, res)
-                            if return_handler is not None:
-                                return return_handler
-                    except:
-                        minqlxtended.log_exception(plugin)
-                        continue
+        for plugin, handler in self._handler_chain:
+            try:
+                res = handler(*self.args, **self.kwargs)
+                if res == minqlxtended.RET_NONE or res is None:
+                    continue
+                elif res == minqlxtended.RET_STOP:
+                    return True
+                elif res == minqlxtended.RET_STOP_EVENT:
+                    self.return_value = False
+                elif res == minqlxtended.RET_STOP_ALL:
+                    return False
+                else: # Got an unknown return value.
+                    return_handler = self.handle_return(handler, res)
+                    if return_handler is not None:
+                        return return_handler
+            except:
+                minqlxtended.log_exception(plugin)
+                continue
 
         return self.return_value
+
+    def _rebuild_chain(self):
+        """Rebuilds the flattened (plugin, handler) snapshot iterated by :meth:`dispatch`.
+        Must be called whenever self.plugins is mutated. The immutable snapshot also
+        keeps a dispatch in progress safe from hooks being added or removed mid-event.
+
+        """
+        chain = []
+        for i in range(5):
+            for plugin in self.plugins:
+                for handler in self.plugins[plugin][i]:
+                    chain.append((plugin, handler))
+        self._handler_chain = tuple(chain)
 
     def handle_return(self, handler, value):
         """Handle an unknown return value. If this returns anything but None,
@@ -141,6 +152,7 @@ class EventDispatcher:
                         raise ValueError("The event has already been hooked with the same handler and priority.")
 
         self.plugins[plugin][priority].append(handler)
+        self._rebuild_chain()
 
     def remove_hook(self, plugin, handler, priority=minqlxtended.PRI_NORMAL):
         """Removes a previously hooked event.
@@ -157,6 +169,7 @@ class EventDispatcher:
         for hook in self.plugins[plugin][priority]:
             if handler == hook:
                 self.plugins[plugin][priority].remove(handler)
+                self._rebuild_chain()
                 return
 
         raise ValueError("The event has not been hooked with the handler provided")
