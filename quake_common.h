@@ -763,15 +763,14 @@ typedef struct cvar_s {
 } cvar_t;
 
 typedef struct {
-    qboolean allowoverflow; // if false, do a Com_Error
-    qboolean overflowed;    // set to true if the buffer size failed (with allowoverflow set)
-    qboolean oob;           // set to true if the buffer size failed (with allowoverflow set)
-    byte *data;
-    int maxsize;
-    int cursize;
-    int readcount;
-    int bit; // for bitwise reads and writes
-} msg_t;
+    qboolean overflowed; // +0x00  set when a write/read overflows the buffer
+    qboolean oob;        // +0x04  out-of-band: raw bytes instead of Huffman-coded
+    byte *data;          // +0x08
+    int maxsize;         // +0x10
+    int cursize;         // +0x14
+    int readcount;       // +0x18
+    int bit;             // +0x1c  bit position for bitwise reads/writes
+} msg_t;                 // 0x20 bytes
 
 typedef struct __attribute__((aligned(4))) usercmd_s {
     int serverTime;     // +0
@@ -1719,6 +1718,8 @@ typedef void(__cdecl *SV_ClientThink_ptr)(client_t *cl, usercmd_t *cmd);
 typedef void(__cdecl *SV_SetConfigstring_ptr)(int index, const char *value);
 typedef void(__cdecl *SV_GetConfigstring_ptr)(int index, char *buffer, int bufferSize);
 typedef void(__cdecl *SV_DropClient_ptr)(client_t *drop, const char *reason);
+typedef void(__cdecl *SV_SendMessageToClient_ptr)(msg_t *msg, client_t *client);
+typedef void(__cdecl *MSG_WriteBits_ptr)(msg_t *msg, int value, int bits);
 typedef void(__cdecl *FS_Startup_ptr)(const char *gameName);
 typedef void(__cdecl *Sys_SetModuleOffset_ptr)(char *moduleName, void *offset);
 typedef void(__cdecl *SV_LinkEntity_ptr)(sharedEntity_t *gEnt);
@@ -1763,6 +1764,8 @@ extern SV_Map_f_ptr SV_Map_f;       // Used to get Cmd_Argc
 extern SV_SetConfigstring_ptr SV_SetConfigstring;
 extern SV_GetConfigstring_ptr SV_GetConfigstring;
 extern SV_DropClient_ptr SV_DropClient;
+extern SV_SendMessageToClient_ptr SV_SendMessageToClient; // server-side demo tap
+extern MSG_WriteBits_ptr MSG_WriteBits;                   // used to append the Huffman svc_EOF
 extern Sys_SetModuleOffset_ptr Sys_SetModuleOffset;
 extern SV_SpawnServer_ptr SV_SpawnServer;
 extern Cmd_ExecuteString_ptr Cmd_ExecuteString;
@@ -1787,6 +1790,7 @@ extern G_FreeEntity_ptr G_FreeEntity;
 // Server replacement functions for hooks.
 void __cdecl My_Cmd_AddCommand(char *cmd, void *func);
 void __cdecl My_Sys_SetModuleOffset(char *moduleName, void *offset);
+void __cdecl My_SV_SendMessageToClient(msg_t *msg, client_t *client); // server-side demo tap
 #ifndef NOPY
 void __cdecl My_SV_ExecuteClientCommand(client_t *cl, char *s, qboolean clientOK);
 void __cdecl My_SV_SendServerCommand(client_t *cl, char *fmt, ...);

@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "common.h"
+#include "demos.h"
 #include "patches.h"
 #include "patterns.h"
 #include "quake_common.h"
@@ -77,8 +78,12 @@ void __cdecl My_G_InitGame(int levelTime, int randomSeed, int restart) {
 }
 
 qboolean __cdecl My_Sys_IsLANAddress(netadr_t adr) {
-    // DebugPrint("Sys_IsLANAddress(%d.%d.%d.%d) intercepted, returning qtrue.\n", adr.ip[0], adr.ip[1], adr.ip[2], adr.ip[3]);
     return qtrue; // the server will always believe that all IPs presented are LAN addresses
+}
+
+void __cdecl My_SV_SendMessageToClient(msg_t* msg, client_t* client) {
+    Demo_Capture(msg, client);
+    SV_SendMessageToClient(msg, client);
 }
 
 // USED FOR PYTHON
@@ -152,6 +157,8 @@ void __cdecl My_SV_SetConfigstring(int index, char* value) {
 void __cdecl My_SV_DropClient(client_t* drop, const char* reason) {
     ClientDisconnectDispatcher(drop - svs->clients, reason);
 
+    Demo_ClientDisconnect(drop - svs->clients); // finalise this client's demo, if any
+
     SV_DropClient(drop, reason);
 }
 
@@ -170,6 +177,8 @@ void __cdecl My_Com_Printf(char* fmt, ...) {
 }
 
 void __cdecl My_SV_SpawnServer(char* server, qboolean killBots) {
+    Demo_CloseAll(); // map change: finalise open demos; each client re-primes with a fresh gamestate
+
     skipFrameDispatcher = qtrue;
     SV_SpawnServer(server, killBots);
     skipFrameDispatcher = qfalse;
@@ -259,6 +268,12 @@ void HookStatic(void) {
     res = Hook((void*)Sys_IsLANAddress, My_Sys_IsLANAddress, (void*)&Sys_IsLANAddress);
     if (res) {
         DebugPrint("ERROR: Failed to hook Sys_IsLANAddress: %d\n", res);
+        failed = 1;
+    }
+
+    res = Hook((void*)SV_SendMessageToClient, My_SV_SendMessageToClient, (void*)&SV_SendMessageToClient);
+    if (res) {
+        DebugPrint("ERROR: Failed to hook SV_SendMessageToClient: %d\n", res);
         failed = 1;
     }
 

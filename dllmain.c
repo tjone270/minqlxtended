@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include "common.h"
+#include "demos.h"
 #include "maps_parser.h"
 #include "patterns.h"
 #include "quake_common.h"
@@ -50,6 +51,8 @@ SV_Map_f_ptr SV_Map_f;
 SV_SetConfigstring_ptr SV_SetConfigstring;
 SV_GetConfigstring_ptr SV_GetConfigstring;
 SV_DropClient_ptr SV_DropClient;
+SV_SendMessageToClient_ptr SV_SendMessageToClient;
+MSG_WriteBits_ptr MSG_WriteBits;
 Sys_SetModuleOffset_ptr Sys_SetModuleOffset;
 SV_SpawnServer_ptr SV_SpawnServer;
 Cmd_ExecuteString_ptr Cmd_ExecuteString;
@@ -135,6 +138,8 @@ static void SearchFunctions(void) {
     STATIC_SEARCH(SV_SetConfigstring, PTRN_SV_SETCONFIGSTRING, MASK_SV_SETCONFIGSTRING);
     STATIC_SEARCH(SV_GetConfigstring, PTRN_SV_GETCONFIGSTRING, MASK_SV_GETCONFIGSTRING);
     STATIC_SEARCH(SV_DropClient, PTRN_SV_DROPCLIENT, MASK_SV_DROPCLIENT);
+    STATIC_SEARCH(SV_SendMessageToClient, PTRN_SV_SENDMESSAGETOCLIENT, MASK_SV_SENDMESSAGETOCLIENT);
+    STATIC_SEARCH(MSG_WriteBits, PTRN_MSG_WRITEBITS, MASK_MSG_WRITEBITS);
     STATIC_SEARCH(Sys_SetModuleOffset, PTRN_SYS_SETMODULEOFFSET, MASK_SYS_SETMODULEOFFSET);
     STATIC_SEARCH(SV_SpawnServer, PTRN_SV_SPAWNSERVER, MASK_SV_SPAWNSERVER);
     STATIC_SEARCH(Cmd_ExecuteString, PTRN_CMD_EXECUTESTRING, MASK_CMD_EXECUTESTRING);
@@ -240,6 +245,8 @@ void InitializeVm(void) {
 // Called after the game is initialized.
 void InitializeCvars(void) {
     sv_maxclients = Cvar_FindVar("sv_maxclients");
+
+    Demo_Init(); // Register the sv_demo* cvars now.
 
     cvars_initialized = 1;
 }
