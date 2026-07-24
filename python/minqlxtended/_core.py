@@ -30,11 +30,13 @@ import importlib
 import datetime
 import os.path
 import logging
+import atexit
+import queue
 import shlex
 import sys
 import os
 
-from logging.handlers import RotatingFileHandler
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 
 if sys.version_info < (3, 9):
     raise AssertionError("Only Python 3.9 and later is supported by minqlxtended")
@@ -142,7 +144,26 @@ def get_logger(plugin=None):
         return logging.getLogger("minqlxtended")
 
 
+_log_listener = None
+_log_atexit_registered = False
+
+
+def _stop_log_listener():
+    """Stops the log listener thread, flushing any queued records. Idempotent."""
+    global _log_listener
+    if _log_listener is not None:
+        try:
+            _log_listener.stop()
+        except Exception:
+            pass
+        _log_listener = None
+
+
 def _configure_logger():
+    global _log_listener, _log_atexit_registered
+
+    _stop_log_listener()
+
     logger = logging.getLogger("minqlxtended")
     logger.setLevel(logging.DEBUG)
 
@@ -163,15 +184,30 @@ def _configure_logger():
     file_handler = RotatingFileHandler(file_path, encoding="utf-8", maxBytes=maxlogsize, backupCount=maxlogs)
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(file_fmt)
-    logger.addHandler(file_handler)
-    logger.info("============================= minqlxtended run @ {} =============================".format(datetime.datetime.now()))
 
     # Console
     console_fmt = logging.Formatter("[%(name)s.%(funcName)s] %(levelname)s: %(message)s", "%H:%M:%S")
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(console_fmt)
-    logger.addHandler(console_handler)
+
+    # Both handlers sit behind a queue serviced by a listener thread, so emitting a log
+    # record never does disk/console I/O on the game thread. respect_handler_level is
+    # required so the INFO console handler doesn't emit every DEBUG record.
+    log_queue = queue.SimpleQueue()
+    logger.addHandler(QueueHandler(log_queue))
+    _log_listener = QueueListener(log_queue, file_handler, console_handler, respect_handler_level=True)
+    _log_listener.start()
+
+    if not _log_atexit_registered:
+        # atexit runs inside Py_Finalize, so a "pyrestart" drains and joins the old
+        # listener before this interpreter dies.
+        atexit.register(_stop_log_listener)
+        _log_atexit_registered = True
+
+    # At debug level so it stays file-only, as it was when it fired before the console
+    # handler was attached.
+    logger.debug("============================= minqlxtended run @ {} =============================".format(datetime.datetime.now()))
 
 
 def log_exception(plugin=None):
