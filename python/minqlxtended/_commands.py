@@ -60,9 +60,10 @@ class Command:
             .format(player.steam_id, self.name[0], self.plugin.name, channel))
         return self.handler(player, msg.split(), channel)
 
-    def is_eligible_name(self, name):
+    def is_eligible_name(self, name, prefix=None):
         if self.prefix:
-            prefix = minqlxtended.get_cvar("qlx_commandPrefix")
+            if prefix is None:
+                prefix = minqlxtended.get_cvar("qlx_commandPrefix")
             if not name.startswith(prefix):
                 return False
             name = name[len(prefix):]
@@ -159,10 +160,13 @@ class CommandInvoker:
         name = msg.strip().split(" ", 1)[0].lower()
         is_client_cmd = channel == "client_command"
         pass_through = True
+        # Fetched once here rather than by every is_eligible_name call (a C cvar
+        # lookup per registered command, on every chat line and client command).
+        prefix = minqlxtended.get_cvar("qlx_commandPrefix")
 
         for priority_level in self._commands:
             for cmd in priority_level:
-                if cmd.is_eligible_name(name) and cmd.is_eligible_channel(channel) and cmd.is_eligible_player(player, is_client_cmd):
+                if cmd.is_eligible_name(name, prefix) and cmd.is_eligible_channel(channel) and cmd.is_eligible_player(player, is_client_cmd):
                     # Client commands will not pass through to the engine unless told to explicitly.
                     # This is to avoid having to return RET_STOP_EVENT just to not get the "unknown cmd" msg.
                     if is_client_cmd:

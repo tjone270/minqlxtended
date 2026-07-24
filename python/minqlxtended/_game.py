@@ -26,6 +26,23 @@ class NonexistentGameError(Exception):
     """An exception raised when accessing properties on an invalid game."""
     pass
 
+# Configstring 0 is fetched and parsed on nearly every Game property access, so cache
+# the parse and only redo it when the raw string actually changes. The tuple swap is
+# atomic under the GIL, making reads safe from threaded plugin code too.
+_cs0_cache = ("", None)
+
+def _cs0_vars():
+    """Returns the parsed configstring 0, or None when no game is active."""
+    global _cs0_cache
+    cs = minqlxtended.get_configstring(0)
+    if not cs:
+        return None
+    raw, parsed = _cs0_cache
+    if cs != raw:
+        parsed = minqlxtended.parse_variables(cs)
+        _cs0_cache = (cs, parsed)
+    return parsed
+
 class Game():
     """A class representing the game. That is, stuff like what map is being played,
     if it's in warmup, and so on. It also has methods to call in timeins, aborts,
@@ -51,21 +68,19 @@ class Game():
             return "Invalid game"
 
     def __contains__(self, key):
-        cs = minqlxtended.get_configstring(0)
-        if not cs:
+        cvars = _cs0_vars()
+        if cvars is None:
             self._valid = False
             raise NonexistentGameError("Invalid game. Is the server loading a new map?")
-            
-        cvars = minqlxtended.parse_variables(cs)
+
         return key in cvars
 
     def __getitem__(self, key):
-        cs = minqlxtended.get_configstring(0)
-        if not cs:
+        cvars = _cs0_vars()
+        if cvars is None:
             self._valid = False
             raise NonexistentGameError("Invalid game. Is the server loading a new map?")
 
-        cvars = minqlxtended.parse_variables(cs)
         return cvars[key]
 
     @property
@@ -74,7 +89,11 @@ class Game():
         cvars might not have attributes on this class, this could be useful.
 
         """
-        return minqlxtended.parse_variables(minqlxtended.get_configstring(0))
+        cvars = _cs0_vars()
+        if cvars is None:
+            return minqlxtended.parse_variables("")
+        # A copy, so callers can't mutate the cached parse.
+        return cvars.copy()
 
     @property
     def type(self):

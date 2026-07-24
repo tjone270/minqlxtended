@@ -19,6 +19,8 @@
 import minqlxtended
 import re
 
+_re_color_code = re.compile(r"\^[0-9]")
+
 _DUMMY_USERINFO = (
     "ui_singlePlayerActive\\0\\cg_autoAction\\1\\cg_autoHop\\0"
     "\\cg_predictItems\\1\\model\\bitterman/sport_blue\\headmodel\\crash/red"
@@ -187,7 +189,7 @@ class Player:
     @property
     def clean_name(self):
         """Removes color tags from the name."""
-        return re.sub(r"\^[0-9]", "", self.name)
+        return _re_color_code.sub("", self.name)
 
     @property
     def qport(self):
