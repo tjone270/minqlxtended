@@ -12,15 +12,21 @@ else
 endif
 
 BINDIR = bin
+BUILDDIR = build
 CC = gcc
 CFLAGS += -shared -std=gnu11 -pthread
 LDFLAGS_NOPY += -ldl
 LDFLAGS += $(shell (python3-config --libs --embed || python3-config --libs) | grep lpython)
 SOURCES_NOPY += dllmain.c commands.c simple_hook.c hooks.c misc.c maps_parser.c trampoline.c patches.c demos.c
 SOURCES += dllmain.c commands.c python_embed.c python_dispatchers.c simple_hook.c hooks.c misc.c maps_parser.c trampoline.c patches.c demos.c
-OBJS = $(SOURCES:.c=.o)
-OBJS_DEBUG = $(SOURCES:.c=.o)
-OBJS_NOPY = $(SOURCES_NOPY:.c=.o)
+
+# Each target compiles into its own object directory so that objects built
+# with one target's flags can never be linked by another (e.g. stale -O0
+# debug objects ending up in the release .so).
+OBJS = $(SOURCES:%.c=$(BUILDDIR)/rel/%.o)
+OBJS_DEBUG = $(SOURCES:%.c=$(BUILDDIR)/dbg/%.o)
+OBJS_NOPY = $(SOURCES_NOPY:%.c=$(BUILDDIR)/nopy/%.o)
+OBJS_NOPY_DEBUG = $(SOURCES_NOPY:%.c=$(BUILDDIR)/nopydbg/%.o)
 OUTPUT = $(BINDIR)/minqlxtended$(SUFFIX).so
 OUTPUT_DEBUG = $(BINDIR)/minqlxtended$(SUFFIX)_debug.so
 OUTPUT_NOPY = $(BINDIR)/minqlxtended_nopy.so
@@ -47,7 +53,8 @@ nopy: $(OUTPUT_NOPY)
 
 nopy_debug: CFLAGS += -gdwarf-2 -Wall -O0 -DNOPY
 nopy_debug: VERSION := MINQLXTENDED_VERSION=\"$(shell git describe --long --tags --dirty --always)-nopy\"
-nopy_debug: $(OUTPUT_NOPY)
+nopy_debug: $(OBJS_NOPY_DEBUG)
+	$(CC) $(CFLAGS) -D$(VERSION) -o $(OUTPUT_NOPY) $(OBJS_NOPY_DEBUG) $(LDFLAGS_NOPY)
 	@echo Done!
 
 $(OUTPUT): $(OBJS)
@@ -65,12 +72,26 @@ $(PYMODULE): $(PYFILES)
 $(PYMODULE_DEBUG): $(PYFILES)
 	@python3 -m zipfile -c $(PYMODULE_DEBUG) python/minqlxtended
 
-.c.o:
+$(BUILDDIR)/rel/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -D$(VERSION) -c $< -o $@
+
+$(BUILDDIR)/dbg/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -D$(VERSION) -c $< -o $@
+
+$(BUILDDIR)/nopy/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -D$(VERSION) -c $< -o $@
+
+$(BUILDDIR)/nopydbg/%.o: %.c
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -D$(VERSION) -c $< -o $@
 
 clean:
 	@echo Cleaning...
-	@$(RM) *.o *~ $(OUTPUT) $(OUTPUT_NOPY)
-	@$(RM) HDE/*.o HDE/*~ $(OUTPUT) $(OUTPUT_NOPY)
-	@$(RM) $(PYMODULE)
+	@$(RM) -r $(BUILDDIR)
+	@$(RM) *.o *~ HDE/*.o HDE/*~
+	@$(RM) $(OUTPUT) $(OUTPUT_DEBUG) $(OUTPUT_NOPY)
+	@$(RM) $(PYMODULE) $(PYMODULE_DEBUG)
 	@echo Done!
