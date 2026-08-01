@@ -119,6 +119,16 @@ class Redis(AbstractDatabase):
     _pool = None
     _pass = ""
 
+    def __init__(self, plugin):
+        super().__init__(plugin)
+        # Shadow the class-level attributes with instance-level ones, so that
+        # `self._conn` can never resolve to `Redis._conn`. Without this, any
+        # instance that has not opened its own connection reads the shared
+        # default through `self._conn`, which breaks both the custom-host
+        # branch in `connect()` and the teardown logic in `close()`.
+        self._conn = None
+        self._pool = None
+
     def __del__(self):
         super().__del__()
         self.close()
@@ -268,7 +278,7 @@ class Redis(AbstractDatabase):
         
         # Fast path: the shared default connection already exists, so skip re-reading
         # the five cvars and rebuilding kwargs on every redis operation.
-        if not host and Redis._conn:
+        if not host and not self._conn and Redis._conn:
             return Redis._conn
 
         if not host: # use the configuration defined in CVARs
