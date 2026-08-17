@@ -1,5 +1,6 @@
 # minqlxtended - Extends Quake Live's dedicated server with extra functionality and scripting.
 # Copyright (C) 2015 Mino <mino@minomino.org>
+# Copyright (C) 2022-2026 Thomas Jones <me@thomasjones.id.au>
 
 # This file is part of minqlxtended.
 
@@ -16,10 +17,28 @@
 # You should have received a copy of the GNU General Public License
 # along with minqlxtended. If not, see <http://www.gnu.org/licenses/>.
 
-import minqlxtended
-import re
+from __future__ import annotations
 
-_re_color_code = re.compile(r"\^[0-9]")
+import minqlxtended
+from typing import Any, Mapping
+
+from ._commands import center_print as _center_print
+from ._commands import re_color_tag as _re_color_code
+from ._enums import (ConnectionState, EntityEffect, EntityFlag, Holdable, Key,
+                     ModelIndex, Mod, PersistantIndex, Powerup, Privilege, ServerFlag,
+                     StatIndex, Team, Weapon)
+
+__all__ = (
+    "AbstractDummyPlayer",
+    "DEFAULT_FLIGHT",
+    "NO_AMMO",
+    "NO_KEYS",
+    "NO_POWERUPS",
+    "NO_WEAPONS",
+    "NonexistentPlayerError",
+    "Player",
+    "RconDummyPlayer",
+)
 
 _DUMMY_USERINFO = (
     "ui_singlePlayerActive\\0\\cg_autoAction\\1\\cg_autoHop\\0"
@@ -28,31 +47,75 @@ _DUMMY_USERINFO = (
     "\\teamtask\\0\\rate\\25000\\country\\NO"
 )
 
+#: What the flight holdable starts at when it is granted.
+DEFAULT_FLIGHT = minqlxtended.Flight((16000, 16000, 1200, 0))
+
+# The empty ones, for building a loadout from nothing:
+#     player.weapons = minqlxtended.NO_WEAPONS._replace(rl=True)   # only a rocket launcher
+NO_WEAPONS = minqlxtended.Weapons((False,) * len(minqlxtended.Weapons._fields))
+NO_AMMO = minqlxtended.Weapons((0,) * len(minqlxtended.Weapons._fields))
+NO_POWERUPS = minqlxtended.Powerups((0,) * len(minqlxtended.Powerups._fields))
+NO_KEYS = minqlxtended.Keys((False,) * len(minqlxtended.Keys._fields))
+
+
+# Which powerup slot each Powerups field is.
+_POWERUP_SLOTS = (
+    Powerup.QUAD,
+    Powerup.BATTLESUIT,
+    Powerup.HASTE,
+    Powerup.INVIS,
+    Powerup.REGEN,
+    Powerup.INVULNERABILITY,
+)
+
+# The four ps.stats slots a Flight is, in field order.
+_FLIGHT_SLOTS = (
+    StatIndex.CUR_FLIGHT_FUEL,
+    StatIndex.MAX_FLIGHT_FUEL,
+    StatIndex.FLIGHT_THRUST,
+    StatIndex.FLIGHT_REFUEL,
+)
+
+
+def _set_bit(value: int, bit: int, on: bool) -> int:
+    """*value* with *bit* set or cleared."""
+    return (value | bit) if on else (value & ~int(bit))
+
+
+def _as_struct(value: Any, kind: type, what: str) -> Any:
+    if not isinstance(value, kind):
+        raise TypeError(f"{what} must be a minqlxtended.{kind.__name__}, got {value!r}")
+
+    return value
+
 
 class NonexistentPlayerError(Exception):
     """An exception that is raised when a player that disconnected is being used
     as if the player were still present.
-
     """
 
     pass
 
 
 class Player:
-    """A class that represents a player on the server. As opposed to minqlbot,
-    attributes are all the values from when the class was instantiated. This
-    means for instance if a player is on the blue team when you check, but
-    then moves to red, it will still be blue when you check a second time.
-    To update it, use :meth:`~.Player.update`. Note that if you update it
-    and the player has disconnected, it will raise a
-    :exc:`minqlxtended.NonexistentPlayerError` exception.
+    """A player on the server.
+
+    Five attributes are a snapshot taken when the instance was built: :attr:`name`,
+    :attr:`team`, :attr:`steam_id`, :attr:`privileges` and :attr:`connection_state`. Call
+    :meth:`~.Player.update` for their current values, which raises
+    :exc:`minqlxtended.NonexistentPlayerError` if the player has disconnected. Everything
+    else reads the engine on every access.
+
+    The snapshot is safe to hand to an :func:`minqlxtended.thread` worker; reading those
+    five live would race the game thread reusing the client slot.
 
     """
 
-    def __init__(self, client_id, info=None):
+    def __init__(self, client_id: int, info: minqlxtended.PlayerInfo | None = None) -> None:
         self._valid = True
+        self._info: Any
 
-        # Can pass own info for efficiency when getting all players and to allow dummy players.
+        # Pass your own info when you're building the whole player list, and for dummies.
         if info:
             self._id = client_id
             self._info = info
@@ -60,619 +123,889 @@ class Player:
             self._id = client_id
             self._info = minqlxtended.player_info(client_id)
             if not self._info:
-                self._invalidate("Tried to initialize a Player instance of nonexistant player {}.".format(client_id))
+                self._invalidate(f"Tried to initialize a Player instance of nonexistant player {client_id}.")
 
         self._userinfo = None
         self._steam_id = self._info.steam_id
 
-        # When a player connects, a the name field in the client struct has yet to be initialized,
-        # so we fall back to the userinfo and try parse it ourselves to get the name if needed.
+        # The name field in the client struct isn't filled in yet while a player is still
+        # connecting, so fall back to parsing it out of the userinfo.
         if self._info.name:
             self._name = self._info.name
         else:
-            self._userinfo = minqlxtended.parse_variables(self._info.userinfo)
+            self._userinfo = minqlxtended.parse_infostring(self._info.userinfo)
             if "name" in self._userinfo:
                 self._name = self._userinfo["name"]
-            else:  # No name at all. Weird userinfo during connection perhaps?
+            else:  # No name at all, which odd userinfo during connection can do.
                 self._name = ""
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         if not self._valid:
-            return "{}(INVALID:'{}':{})".format(self.__class__.__name__, self.clean_name, self.steam_id)
+            return f"{self.__class__.__name__}(INVALID:'{self.clean_name}':{self.steam_id})"
 
-        return "{}({}:'{}':{})".format(self.__class__.__name__, self._id, self.clean_name, self.steam_id)
+        return f"{self.__class__.__name__}({self._id}:'{self.clean_name}':{self.steam_id})"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
 
-    def __contains__(self, key):
-        return key in self.cvars
+    def __contains__(self, key: str) -> bool:
+        return key in self._cvars()
 
-    def __getitem__(self, key):
-        return self.cvars[key]
+    def __getitem__(self, key: str) -> str:
+        return self._cvars()[key]
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, type(self)):
             return self.steam_id == other.steam_id
         else:
             return self.steam_id == other
 
-    def __ne__(self, other):
-        return not self.__eq__(other)
+    def __hash__(self) -> int:
+        return hash(self.steam_id)
 
-    def update(self):
-        """Update the player information with the latest data. If the player
-        disconnected it will raise an exception and invalidates a player.
-        The player's name and Steam ID can still be accessed after being
-        invalidated, but anything else will make it throw an exception too.
+    def update(self) -> None:
+        """Re-read the player's information, invalidating the instance if they
+        disconnected. Name and Steam ID still read after that; anything else raises.
 
         :raises: minqlxtended.NonexistentPlayerError
-
         """
-        self._info = minqlxtended.player_info(self._id)
 
-        if not self._info or self._steam_id != self._info.steam_id:
+        info = minqlxtended.player_info(self._id)
+
+        if not info or self._steam_id != info.steam_id:
             self._invalidate()
+
+        self._info = info
+        self._userinfo = None
 
         if self._info.name:
             self._name = self._info.name
         else:
-            self._userinfo = minqlxtended.parse_variables(self._info.userinfo)
+            self._userinfo = minqlxtended.parse_infostring(self._info.userinfo)
             if "name" in self._userinfo:
                 self._name = self._userinfo["name"]
             else:
                 self._name = ""
 
-    def _invalidate(self, e="The player does not exist anymore. Did the player disconnect?"):
+    def _invalidate(self, e: str = "The player does not exist anymore. Did the player disconnect?") -> None:
         self._valid = False
         raise NonexistentPlayerError(e)
 
-    @property
-    def cvars(self):
+    def _cvars(self) -> dict[str, str]:
+        """The parsed userinfo itself, uncopied. Callers in this class must not mutate it.
+
+        :attr:`cvars` is the copy, for callers outside the class.
+        """
         if not self._valid:
             self._invalidate()
 
-        if not self._userinfo:
-            self._userinfo = minqlxtended.parse_variables(self._info.userinfo)
+        if self._userinfo is None:
+            self._userinfo = minqlxtended.parse_infostring(self._info.userinfo)
 
-        return self._userinfo.copy()
+        return self._userinfo
+
+    def _cvar(self, key: str, default: str = "") -> str:
+        """The userinfo value for *key*, or *default* when the client has not sent one."""
+        return self._cvars().get(key, default)
+
+    @property
+    def cvars(self) -> dict[str, str]:
+        return self._cvars().copy()
 
     @cvars.setter
-    def cvars(self, new_cvars):
-        new = "".join(["\\{}\\{}".format(key, new_cvars[key]) for key in new_cvars])
-        minqlxtended.client_command(self.id, 'userinfo "{}"'.format(new))
+    def cvars(self, new_cvars: Mapping[str, object]) -> None:
+        if not self._valid:
+            self._invalidate()
 
-    @property
-    def steam_id(self):
-        return self._steam_id
+        # Through format_infostring, which the userinfo hook also serialises with.
+        minqlxtended.client_command(
+            self.id, f'userinfo "{minqlxtended.format_infostring(new_cvars)}"')
 
-    @property
-    def id(self):
-        return self._id
+        self._userinfo = None
 
-    @property
-    def ip(self):
-        if "ip" in self:
-            return self["ip"].split(":")[0]
-        else:
-            return ""
-
-    @property
-    def clan(self):
-        """The clan tag. Not actually supported by QL, but it used to be and
-        fortunately the scoreboard still properly displays it if we manually
-        set the configstring to use clan tags."""
-        try:
-            return minqlxtended.parse_variables(minqlxtended.get_configstring(529 + self._id))["cn"]
-        except KeyError:
-            return ""
-
-    @clan.setter
-    def clan(self, tag):
-        index = self.id + 529
-        cs = minqlxtended.parse_variables(minqlxtended.get_configstring(index))
-        cs["xcn"] = tag
-        cs["cn"] = tag
-        new_cs = "".join(["\\{}\\{}".format(key, cs[key]) for key in cs])
-        minqlxtended.set_configstring(index, new_cs)
-
-    @property
-    def name(self):
-        return self._name + "^7"
-
-    @name.setter
-    def name(self, value):
+    def _set_userinfo(self, **changes: Any) -> None:
+        """Change some userinfo keys and send the result back to the client."""
         new = self.cvars
-        new["name"] = value
+        new.update(changes)
         self.cvars = new
 
     @property
-    def clean_name(self):
+    def steam_id(self) -> int:
+        return self._steam_id
+
+    @property
+    def id(self) -> int:
+        return self._id
+
+    @property
+    def entity(self) -> minqlxtended.Entity:
+        """This player's :class:`minqlxtended.Entity`, a live view onto g_entities."""
+        return minqlxtended.Entity(self.id)
+
+    @property
+    def gclient(self) -> minqlxtended.GameClient:
+        """The game module's state for this player, as a
+        :class:`minqlxtended.GameClient`."""
+        return minqlxtended.GameClient(self.id)
+
+    @property
+    def connection(self) -> minqlxtended.Client:
+        """The server's connection record, as a :class:`minqlxtended.Client`.
+
+        The engine's `client_t`. :attr:`gclient` is the game module's `gclient_t`.
+
+        """
+        return minqlxtended.Client(self.id)
+
+    @property
+    def ip(self) -> str:
+        """The address this player connected from. Read from the connection itself."""
+        return self.connection.ip
+
+    @property
+    def clan(self) -> str:
+        """The clan tag, from the configstring cache.
+
+        QL has no clan support of its own; the scoreboard displays whatever tag the
+        configstring carries.
+        """
+        return minqlxtended.player_configstring_variables(self.id).get("cn", "")
+
+    @clan.setter
+    def clan(self, tag: str) -> None:
+        """Set the clan tag.
+
+        Dirty-checked: setting the tag it already has does nothing. To force the
+        set_configstring dispatchers to run, call
+        ``minqlxtended.set_configstring(minqlxtended.CS_PLAYERS + player.id, player.configstring)``.
+        """
+        minqlxtended.update_player_configstring_variables(self.id, {"xcn": tag, "cn": tag})
+
+    @property
+    def configstring(self) -> str:
+        """The player's raw configstring, from the cache. Use
+        :attr:`configstring_variables` for it parsed into a dict."""
+        return minqlxtended.player_configstring(self.id)
+
+    @property
+    def configstring_variables(self) -> Mapping[str, str]:
+        """The player's configstring, parsed. Read-only: it is the shared parse every
+        other reader sees, so copy it before changing anything."""
+        return minqlxtended.player_configstring_variables(self.id)
+
+    def update_configstring(self, changes: Mapping[str, str | None]) -> bool:
+        """Read-modify-write this player's own configstring, for everyone.
+
+        Goes through the server's table, so every client sees the change and it survives
+        later writes. A value of None removes the key. Returns False if nothing changed.
+        """
+        return minqlxtended.update_player_configstring_variables(self.id, changes)
+
+    @property
+    def name(self) -> str:
+        return self._name + "^7"
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._set_userinfo(name=value)
+
+    @property
+    def clean_name(self) -> str:
         """Removes color tags from the name."""
         return _re_color_code.sub("", self.name)
 
     @property
-    def qport(self):
-        if "qport" in self:
-            return int(self["qport"])
-        else:
-            return -1
+    def qport(self) -> int:
+        """The port the client multiplexes on behind a NAT.
+
+        From the netchan. The userinfo copy is whatever the client chose to tell us.
+
+        """
+        return self.connection.netchan.qport
 
     @property
-    def team(self):
-        return minqlxtended.TEAMS[self._info.team]
+    def team(self) -> Team:
+        return Team.from_index(self._info.team)
 
     @team.setter
-    def team(self, new_team):
+    def team(self, new_team: str) -> None:
         self.put(new_team)
 
     @property
-    def colors(self):
-        # Float because they can occasionally be floats for some reason.
-        return float(self["color1"]), float(self["color2"])
+    def colors(self) -> tuple[float, float]:
+        # Float, since the userinfo values are not always integral.
+        return float(self._cvar("color1", "0")), float(self._cvar("color2", "0"))
 
     @colors.setter
-    def colors(self, value):
-        new = self.cvars
+    def colors(self, value: tuple[float, float]) -> None:
         c1, c2 = value
-        new["color1"] = c1
-        new["color2"] = c2
-        self.cvars = new
+        self._set_userinfo(color1=c1, color2=c2)
 
     @property
     def model(self):
-        return self["model"]
+        return self._cvar("model")
 
     @model.setter
     def model(self, value):
-        new = self.cvars
-        new["model"] = value
-        self.cvars = new
+        self._set_userinfo(model=value)
 
     @property
     def headmodel(self):
-        return self["headmodel"]
+        return self._cvar("headmodel")
 
     @headmodel.setter
     def headmodel(self, value):
-        new = self.cvars
-        new["headmodel"] = value
-        self.cvars = new
+        self._set_userinfo(headmodel=value)
 
     @property
     def handicap(self):
-        return self["handicap"]
+        return self._cvar("handicap", "100")
 
     @handicap.setter
     def handicap(self, value):
-        new = self.cvars
-        new["handicap"] = value
-        self.cvars = new
+        self._set_userinfo(handicap=value)
 
     @property
     def autohop(self):
-        return bool(int(self["cg_autoHop"]))
+        return bool(int(self._cvar("cg_autoHop", "0")))
 
     @autohop.setter
     def autohop(self, value):
-        new = self.cvars
-        new["cg_autoHop"] = int(value)
-        self.cvars = new
+        self._set_userinfo(cg_autoHop=int(value))
 
     @property
     def autoaction(self):
-        return bool(int(self["cg_autoAction"]))
+        return bool(int(self._cvar("cg_autoAction", "0")))
 
     @autoaction.setter
     def autoaction(self, value):
-        new = self.cvars
-        new["cg_autoAction"] = int(value)
-        self.cvars = new
+        self._set_userinfo(cg_autoAction=int(value))
 
     @property
     def predictitems(self):
-        return bool(int(self["cg_predictItems"]))
+        return bool(int(self._cvar("cg_predictItems", "0")))
 
     @predictitems.setter
     def predictitems(self, value):
-        new = self.cvars
-        new["cg_predictItems"] = int(value)
-        self.cvars = new
+        self._set_userinfo(cg_predictItems=int(value))
 
     @property
-    def connection_state(self):
-        """A string describing the connection state of a player.
+    def connection_state(self) -> ConnectionState:
+        """How far through connecting the player is.
 
-        Possible values:
-        - *free* -- The player has disconnected and the slot is free to be used by someone else.
-        - *zombie* -- The player disconnected and his/her slot will be available to other players shortly.
-        - *connected* -- The player connected, but is currently loading the game.
-        - *primed* -- The player was sent the necessary information to play, but has yet to send commands.
-        - *active* -- The player finished loading and is actively sending commands to the server.
-
-        In other words, if you need to make sure a player is in-game, check if ``player.connection_state == "active"``.
+        *free* and *zombie* are a slot being released, *connected* and *primed* are still
+        loading, and *active* is in-game. Check
+        ``player.connection_state == "active"`` to require in-game.
 
         """
-        return minqlxtended.CONNECTION_STATES[self._info.connection_state]
+        return ConnectionState.from_index(self._info.connection_state)
 
     @property
-    def state(self):
+    def state(self) -> minqlxtended.PlayerState | None:
+        """This player's engine state, or None if they have no game client."""
         return minqlxtended.player_state(self.id)
 
     @property
-    def privileges(self):
-        if self._info.privileges == minqlxtended.PRIV_NONE:
-            return None
-        elif self._info.privileges == minqlxtended.PRIV_MOD:
-            return "mod"
-        elif self._info.privileges == minqlxtended.PRIV_ADMIN:
-            return "admin"
-        elif self._info.privileges == minqlxtended.PRIV_ROOT:
-            return "root"
-        elif self._info.privileges == minqlxtended.PRIV_BANNED:
-            return "banned"
+    def _live_state(self) -> minqlxtended.PlayerState:
+        """:attr:`state`, but raises instead of answering None."""
+        state = minqlxtended.player_state(self.id)
+        if state is None:
+            raise minqlxtended.EngineStateError(
+                f"no game client in slot {self.id}.")
+        return state
+
+    @property
+    def _live_entity(self) -> minqlxtended.Entity:
+        """:attr:`entity`, but raises for a slot with nobody in it."""
+        entity = minqlxtended.Entity(self.id)
+        if entity.client is None:
+            raise minqlxtended.EngineStateError(
+                f"no game client in slot {self.id}.")
+
+        return entity
+
+    @property
+    def _live_stats(self) -> minqlxtended.PlayerStats:
+        """:attr:`stats`, but raises instead of answering None. See :attr:`_live_state`."""
+        stats = minqlxtended.player_stats(self.id)
+        if stats is None:
+            raise minqlxtended.EngineStateError(
+                f"no game client in slot {self.id}.")
+        return stats
+
+    @property
+    def privileges(self) -> Privilege:
+        """The engine's privilege level, as a :class:`Privilege`.
+
+        Distinct from the permission level the permission plugin keeps in the database,
+        the one :meth:`Plugin.db.has_permission` reads. No privileges is
+        :attr:`Privilege.NONE`; test with ``== Privilege.NONE``, since every member is a
+        non-empty string and so always truthy.
+
+        """
+        priv = self._info.privileges
+        try:
+            return Privilege.from_level(priv)
+        except ValueError:
+            minqlxtended.get_logger().warning(
+                "Player %s has unknown privilege level %r; treating as no privileges.",
+                self.steam_id, priv)
+            return Privilege.NONE
 
     @privileges.setter
-    def privileges(self, value):
-        if not value or value == "none":
-            minqlxtended.set_privileges(self.id, minqlxtended.PRIV_NONE)
-        elif value == "mod":
-            minqlxtended.set_privileges(self.id, minqlxtended.PRIV_MOD)
-        elif value == "admin":
-            minqlxtended.set_privileges(self.id, minqlxtended.PRIV_ADMIN)
-        else:
-            raise ValueError("Invalid privilege level.")
+    def privileges(self, value: Privilege | None) -> None:
+        # None means "take their privileges away".
+        try:
+            privilege = Privilege.NONE if value is None else Privilege(value)
+        except ValueError:
+            levels = ", ".join(repr(str(p)) for p in Privilege)
+            raise ValueError(f"Invalid privilege level: {value!r}. Valid levels are {levels}.") from None
+
+        self.gclient.sess.privileges = privilege.level
 
     @property
-    def country(self):
-        return self["country"]
+    def country(self) -> str:
+        return self._cvar("country")
 
     @country.setter
-    def country(self, value):
-        new = self.cvars
-        new["country"] = value
-        self.cvars = new
+    def country(self, value: str) -> None:
+        self._set_userinfo(country=value)
 
     @property
-    def valid(self):
+    def valid(self) -> bool:
         return self._valid
 
     @property
-    def stats(self) -> minqlxtended.PlayerStats:
+    def stats(self) -> minqlxtended.PlayerStats | None:
+        """This player's match statistics, or None if they have no game client."""
         return minqlxtended.player_stats(self.id)
 
     @stats.setter
-    def stats(self, value: minqlxtended.PlayerStats):
-        return minqlxtended.set_stats(self.id, value)
+    def stats(self, value: minqlxtended.PlayerStats) -> None:
+        _as_struct(value, minqlxtended.PlayerStats, "stats")
+        expanded                    = self.gclient.expanded_stats
+        expanded.num_kills          = value.kills
+        expanded.num_deaths         = value.deaths
+        expanded.total_damage_dealt = value.damage_dealt
+        expanded.total_damage_taken = value.damage_taken
 
     @property
-    def ping(self):
-        return self.stats.ping
+    def ping(self) -> int:
+        """The server's own round-trip measurement.
 
-    def position(self, reset=False, **kwargs):
-        if reset:
-            pos = minqlxtended.Vector3((0, 0, 0))
-        else:
-            pos = self.state.position
-
-        if not kwargs:
-            return pos
-
-        x = pos.x if "x" not in kwargs else kwargs["x"]
-        y = pos.y if "y" not in kwargs else kwargs["y"]
-        z = pos.z if "z" not in kwargs else kwargs["z"]
-
-        return minqlxtended.set_position(self.id, minqlxtended.Vector3((x, y, z)))
-
-    def velocity(self, reset=False, **kwargs):
-        if reset:
-            vel = minqlxtended.Vector3((0, 0, 0))
-        else:
-            vel = self.state.velocity
-
-        if not kwargs:
-            return vel
-
-        x = vel.x if "x" not in kwargs else kwargs["x"]
-        y = vel.y if "y" not in kwargs else kwargs["y"]
-        z = vel.z if "z" not in kwargs else kwargs["z"]
-
-        return minqlxtended.set_velocity(self.id, minqlxtended.Vector3((x, y, z)))
-
-    def weapons(self, reset=False, **kwargs):
-        if reset:
-            weaps = minqlxtended.Weapons(((False,) * 15))
-        else:
-            weaps = self.state.weapons
-
-        if not kwargs:
-            return weaps
-
-        g = weaps.g if "g" not in kwargs else kwargs["g"]
-        mg = weaps.mg if "mg" not in kwargs else kwargs["mg"]
-        sg = weaps.sg if "sg" not in kwargs else kwargs["sg"]
-        gl = weaps.gl if "gl" not in kwargs else kwargs["gl"]
-        rl = weaps.rl if "rl" not in kwargs else kwargs["rl"]
-        lg = weaps.lg if "lg" not in kwargs else kwargs["lg"]
-        rg = weaps.rg if "rg" not in kwargs else kwargs["rg"]
-        pg = weaps.pg if "pg" not in kwargs else kwargs["pg"]
-        bfg = weaps.bfg if "bfg" not in kwargs else kwargs["bfg"]
-        gh = weaps.gh if "gh" not in kwargs else kwargs["gh"]
-        ng = weaps.ng if "ng" not in kwargs else kwargs["ng"]
-        pl = weaps.pl if "pl" not in kwargs else kwargs["pl"]
-        cg = weaps.cg if "cg" not in kwargs else kwargs["cg"]
-        hmg = weaps.hmg if "hmg" not in kwargs else kwargs["hmg"]
-        hands = weaps.hands if "hands" not in kwargs else kwargs["hands"]
-
-        return minqlxtended.set_weapons(self.id, minqlxtended.Weapons((g, mg, sg, gl, rl, lg, rg, pg, bfg, gh, ng, pl, cg, hmg, hands)))
-
-    def weapon(self, new_weapon=None):
-        if new_weapon is None:
-            return self.state.weapon
-        elif new_weapon in minqlxtended.WEAPONS:
-            pass
-        elif new_weapon in minqlxtended.WEAPONS.values():
-            # WEAPONS keys are 1-based; map the name back to its key rather than
-            # using the 0-based list index (which selects the wrong weapon).
-            new_weapon = {v: k for k, v in minqlxtended.WEAPONS.items()}[new_weapon]
-
-        return minqlxtended.set_weapon(self.id, new_weapon)
-
-    def ammo(self, reset=False, **kwargs):
-        if reset:
-            a = minqlxtended.Weapons(((0,) * 15))
-        else:
-            a = self.state.ammo
-
-        if not kwargs:
-            return a
-
-        g = a.g if "g" not in kwargs else kwargs["g"]
-        mg = a.mg if "mg" not in kwargs else kwargs["mg"]
-        sg = a.sg if "sg" not in kwargs else kwargs["sg"]
-        gl = a.gl if "gl" not in kwargs else kwargs["gl"]
-        rl = a.rl if "rl" not in kwargs else kwargs["rl"]
-        lg = a.lg if "lg" not in kwargs else kwargs["lg"]
-        rg = a.rg if "rg" not in kwargs else kwargs["rg"]
-        pg = a.pg if "pg" not in kwargs else kwargs["pg"]
-        bfg = a.bfg if "bfg" not in kwargs else kwargs["bfg"]
-        gh = a.gh if "gh" not in kwargs else kwargs["gh"]
-        ng = a.ng if "ng" not in kwargs else kwargs["ng"]
-        pl = a.pl if "pl" not in kwargs else kwargs["pl"]
-        cg = a.cg if "cg" not in kwargs else kwargs["cg"]
-        hmg = a.hmg if "hmg" not in kwargs else kwargs["hmg"]
-        hands = a.hands if "hands" not in kwargs else kwargs["hands"]
-
-        return minqlxtended.set_ammo(self.id, minqlxtended.Weapons((g, mg, sg, gl, rl, lg, rg, pg, bfg, gh, ng, pl, cg, hmg, hands)))
-
-    def powerups(self, reset=False, **kwargs):
-        if reset:
-            pu = minqlxtended.Powerups(((0,) * 6))
-        else:
-            pu = self.state.powerups
-
-        if not kwargs:
-            return pu
-
-        quad = pu.quad if "quad" not in kwargs else round(kwargs["quad"] * 1000)
-        bs = pu.battlesuit if "battlesuit" not in kwargs else round(kwargs["battlesuit"] * 1000)
-        haste = pu.haste if "haste" not in kwargs else round(kwargs["haste"] * 1000)
-        invis = pu.invisibility if "invisibility" not in kwargs else round(kwargs["invisibility"] * 1000)
-        regen = pu.regeneration if "regeneration" not in kwargs else round(kwargs["regeneration"] * 1000)
-        invul = pu.invulnerability if "invulnerability" not in kwargs else round(kwargs["invulnerability"] * 1000)
-
-        return minqlxtended.set_powerups(self.id, minqlxtended.Powerups((quad, bs, haste, invis, regen, invul)))
-
-    def keys(self, reset=False, **kwargs):
-        if reset:
-            k = minqlxtended.Keys(((False,) * 3))
-        else:
-            k = self.state.keys
-
-        if not kwargs:
-            return k
-
-        silver = k.silver if "silver" not in kwargs else bool(kwargs["silver"])
-        gold = k.gold if "gold" not in kwargs else bool(kwargs["gold"])
-        master = k.master if "master" not in kwargs else bool(kwargs["master"])
-
-        return minqlxtended.set_keys(self.id, minqlxtended.Keys((silver, gold, master)))
+        Read from the connection. `PlayerStats.ping` is the game module's separate copy in
+        `ps.ping`, and the two can disagree.
+        """
+        return self.connection.ping
 
     @property
-    def holdable(self):
-        return self.state.holdable
+    def position(self) -> minqlxtended.Vector3:
+        """Where the player is, as a :class:`minqlxtended.Vector3`.
+
+        Assign a Vector3 or any three-item sequence. To change one axis::
+            player.position = player.position._replace(z=100)
+        """
+        return self._live_state.position
+
+    @position.setter
+    def position(self, value: Any) -> None:
+        self.gclient.ps.origin = value
+
+    @property
+    def velocity(self) -> minqlxtended.Vector3:
+        """How fast the player is moving, as a :class:`minqlxtended.Vector3`.
+
+        Assign a Vector3 or any three-item sequence, the way :attr:`position` does.
+        """
+        return self._live_state.velocity
+
+    @velocity.setter
+    def velocity(self, value: Any) -> None:
+        self.gclient.ps.velocity = value
+
+    @property
+    def weapons(self) -> minqlxtended.Weapons:
+        """Which weapons the player is carrying, as a :class:`minqlxtended.Weapons`.
+
+        To change some of them, or to build a set from nothing::
+            player.weapons = player.weapons._replace(rl=True, rg=True)
+            player.weapons = minqlxtended.NO_WEAPONS._replace(rl=True)
+        """
+        return self._live_state.weapons
+
+    @weapons.setter
+    def weapons(self, value: minqlxtended.Weapons) -> None:
+        _as_struct(value, minqlxtended.Weapons, "weapons")
+        held = 0
+        for weapon, carried in zip(Weapon, value):
+            if not isinstance(carried, bool):
+                raise TypeError(f"weapons.{weapon.short} must be a bool, got {carried!r}")
+            if carried:
+                held |= 1 << weapon
+
+        self.gclient.ps.stats[StatIndex.WEAPONS] = held
+
+    @property
+    def weapon(self) -> Weapon:
+        """The weapon the player is currently holding, as a :class:`Weapon`::
+            player.weapon = minqlxtended.Weapon.ROCKET_LAUNCHER
+            player.weapon = minqlxtended.Weapon.from_short("rl")
+
+        """
+        return Weapon(self.gclient.ps.weapon)
+
+    @weapon.setter
+    def weapon(self, value: Weapon) -> None:
+        try:
+            weapon = Weapon(value)
+        except ValueError:
+            shorts = ", ".join(repr(w.short) for w in Weapon)
+            raise ValueError(
+                f"Invalid weapon: {value!r}. Use a Weapon member, or Weapon.from_short() for {shorts}.") from None
+
+        self.gclient.ps.weapon = weapon
+
+    @property
+    def ammo(self) -> minqlxtended.Weapons:
+        """How much ammunition the player has, as a :class:`minqlxtended.Weapons` of
+        counts instead of flags::
+            player.ammo = player.ammo._replace(rl=25)
+
+        """
+        return self._live_state.ammo
+
+    @ammo.setter
+    def ammo(self, value: minqlxtended.Weapons) -> None:
+        _as_struct(value, minqlxtended.Weapons, "ammo")
+
+        ammo = self.gclient.ps.ammo
+        for weapon, count in zip(Weapon, value):
+            ammo[weapon] = count
+
+    @property
+    def powerups(self) -> minqlxtended.Powerups:
+        """Time remaining on each powerup, as a :class:`minqlxtended.Powerups`.
+
+        .. note::
+            Milliseconds, both reading and writing, so convert at the call site::
+
+                player.powerups = player.powerups._replace(quad=30 * 1000)
+
+        """
+        return self._live_state.powerups
+
+    @powerups.setter
+    def powerups(self, value: minqlxtended.Powerups) -> None:
+        _as_struct(value, minqlxtended.Powerups, "powerups")
+
+        powerups = self.gclient.ps.powerups
+        now      = minqlxtended.level.time
+        expiry   = now - (now % 1000)
+
+        for slot, remaining in zip(_POWERUP_SLOTS, value):
+            powerups[slot] = expiry + remaining if remaining else 0
+
+    @property
+    def keys(self) -> minqlxtended.Keys:
+        """Which keys the player holds, as a :class:`minqlxtended.Keys`."""
+        return self._live_state.keys
+
+    @keys.setter
+    def keys(self, value: minqlxtended.Keys) -> None:
+        _as_struct(value, minqlxtended.Keys, "keys")
+
+        held = 0
+        for key, carried in zip(Key, value):
+            if not isinstance(carried, bool):
+                raise TypeError(f"keys.{key.name.lower()} must be a bool, got {carried!r}")
+            if carried:
+                held |= 1 << key
+
+        self.gclient.ps.stats[StatIndex.KEY] = held
+
+    @property
+    def holdable(self) -> Holdable | None:
+        """The holdable item the player is carrying, as a :class:`Holdable`, or None.
+
+        Assigning None takes it away. Nothing else falsy does.
+        """
+        held = self._live_state.holdable
+        if held is None:
+            return None
+
+        try:
+            return Holdable(held)
+        except ValueError:
+            minqlxtended.get_logger().warning(
+                "Player %s is holding %r, which names nothing we know; "
+                "reporting it as no holdable.", self.steam_id, held)
+            return None
 
     @holdable.setter
-    def holdable(self, value):
-        if not value:
-            minqlxtended.set_holdable(self.id, 0)
-        elif value == "teleporter":
-            minqlxtended.set_holdable(self.id, 27)  # MODELINDEX_TELEPORTER
-        elif value == "medkit":
-            minqlxtended.set_holdable(self.id, 28)  # MODELINDEX_MEDKIT
-        elif value == "flight":
-            minqlxtended.set_holdable(self.id, 34)  # MODELINDEX_FLIGHT
-            self.flight(reset=True)
-        elif value == "kamikaze":
-            minqlxtended.set_holdable(self.id, 37)  # MODELINDEX_KAMIKAZE
-        elif value == "portal":
-            minqlxtended.set_holdable(self.id, 38)  # MODELINDEX_PORTAL
-        elif value == "invulnerability":
-            minqlxtended.set_holdable(self.id, 39)  # MODELINDEX_INVULNERABILITY
-        else:
-            raise ValueError("Invalid holdable item.")
+    def holdable(self, value: Holdable | None) -> None:
+        if value is None:
+            self._set_holdable(0)
+            return
 
-    def drop_holdable(self):
+        try:
+            value = Holdable(value)
+        except ValueError:
+            items = ", ".join(repr(str(h)) for h in Holdable)
+            raise ValueError(f"Invalid holdable item: {value!r}. Valid items are {items}.") from None
+
+        self._set_holdable(value.model_index)
+        if value == Holdable.FLIGHT:
+            # The engine leaves whatever the last carrier had in the flight fields, so a
+            # freshly granted holdable has to be given its starting values here.
+            self._set_flight(DEFAULT_FLIGHT)
+
+    def _set_holdable(self, model_index: int) -> None:
+        """Put a model index in the holdable slot, keeping the kamikaze effect with it.
+
+        The client draws the skull from an effect bit rather than the slot, so the two
+        move together.
+        """
+        ps          = self.gclient.ps
+        ps.e_flags  = _set_bit(ps.e_flags, EntityEffect.KAMIKAZE,
+                               model_index == ModelIndex.KAMIKAZE)
+        ps.stats[StatIndex.HOLDABLE_ITEM] = model_index
+
+    def drop_holdable(self) -> None:
         minqlxtended.drop_holdable(self.id)
 
-    def flight(self, reset=False, **kwargs):
-        state = self.state
-        if state.holdable != "flight":
-            self.holdable = "flight"
-            reset = True
+    @property
+    def flight(self) -> minqlxtended.Flight:
+        """The player's flight parameters, as a :class:`minqlxtended.Flight`.
 
-        if reset:
-            # Set to defaults on reset.
-            fl = minqlxtended.Flight((16000, 16000, 1200, 0))
-        else:
-            fl = state.flight
+        Reading is meaningless unless the player carries the flight holdable. Assigning
+        grants them the holdable first::
+            player.flight = player.flight._replace(fuel=8000)
 
-        fuel = fl.fuel if "fuel" not in kwargs else kwargs["fuel"]
-        max_fuel = fl.max_fuel if "max_fuel" not in kwargs else kwargs["max_fuel"]
-        thrust = fl.thrust if "thrust" not in kwargs else kwargs["thrust"]
-        refuel = fl.refuel if "refuel" not in kwargs else kwargs["refuel"]
+        :attr:`DEFAULT_FLIGHT` is what a freshly granted one starts at.
+        """
+        return self._live_state.flight
 
-        return minqlxtended.set_flight(self.id, minqlxtended.Flight((fuel, max_fuel, thrust, refuel)))
+    @flight.setter
+    def flight(self, value: minqlxtended.Flight) -> None:
+        _as_struct(value, minqlxtended.Flight, "flight")
+
+        if self._live_state.holdable != Holdable.FLIGHT:
+            self.holdable = Holdable.FLIGHT
+
+        self._set_flight(value)
+
+    def _set_flight(self, value: minqlxtended.Flight) -> None:
+        """The four ps.stats slots, without the granting the setter above does."""
+        stats = self.gclient.ps.stats
+        for slot, parameter in zip(_FLIGHT_SLOTS, value):
+            stats[slot] = parameter
 
     @property
     def noclip(self):
-        return self.state.noclip
+        return self.gclient.noclip
 
     @noclip.setter
     def noclip(self, value):
-        minqlxtended.noclip(self.id, bool(value))
+        self.gclient.noclip = bool(value)
 
     @property
     def god(self):
-        return self.state.god
+        return bool(self._live_entity.flags & EntityFlag.GODMODE)
 
     @god.setter
     def god(self, value):
-        minqlxtended.god(self.id, bool(value))
+        entity       = self._live_entity
+        entity.flags = _set_bit(entity.flags, EntityFlag.GODMODE, bool(value))
 
     @property
     def notarget(self):
-        return self.state.notarget
+        return bool(self._live_entity.flags & EntityFlag.NOTARGET)
 
     @notarget.setter
     def notarget(self, value):
-        minqlxtended.notarget(self.id, bool(value))
+        entity       = self._live_entity
+        entity.flags = _set_bit(entity.flags, EntityFlag.NOTARGET, bool(value))
 
     @property
     def flags(self):
-        return self.state.flags
+        return self._live_entity.flags
 
     @flags.setter
     def flags(self, value):
-        minqlxtended.set_flags(self.id, int(value))
+        self._live_entity.flags = int(value)
 
     @property
     def health(self):
-        return self.state.health
+        return self._live_entity.health
 
     @health.setter
     def health(self, value):
-        minqlxtended.set_health(self.id, value)
+        # gentity_t.health. stats[StatIndex.HEALTH] is the clamped copy the HUD
+        # reads, and it's rewritten from this one every frame.
+        self._live_entity.health = value
 
     @property
     def armor(self):
-        return self.state.armor
+        return self.gclient.ps.stats[StatIndex.ARMOR]
 
     @armor.setter
     def armor(self, value):
-        minqlxtended.set_armor(self.id, value)
+        self.gclient.ps.stats[StatIndex.ARMOR] = value
 
     @property
-    def is_alive(self):
-        return self.state.is_alive
+    def speed(self):
+        return self.gclient.ps.speed
+
+    @speed.setter
+    def speed(self, value):
+        self.gclient.ps.speed = value
+
+    @property
+    def gravity(self):
+        return self.gclient.ps.gravity
+
+    @gravity.setter
+    def gravity(self, value):
+        self.gclient.ps.gravity = value
+
+    def invulnerability(self, time: int) -> None:
+        """Makes the player invulnerable for a while. Write-only; PlayerState doesn't carry it.
+
+        :param time: How long to be invulnerable for, in milliseconds.
+        :type time: int
+        :raises: ValueError -- if *time* is not positive.
+        """
+        if time <= 0:
+            raise ValueError("time needs to be a positive integer.")
+
+        self.gclient.invulnerability_time = minqlxtended.level.time + time
+
+    @property
+    def userinfo(self) -> str | None:
+        """The player's raw userinfo string. Use :attr:`cvars` for it parsed into a dict."""
+        return minqlxtended.get_userinfo(self.id)
+
+    @property
+    def expanded_stats(self) -> minqlxtended.PlayerExpandedStats | None:
+        """Live per-match stats as a ``PlayerExpandedStats``. Per-weapon members are
+        ``Weapons`` sequences, e.g. ``player.expanded_stats.shots_hit.rg``."""
+        return minqlxtended.player_expanded_stats(self.id)
+
+    @property
+    def demo_status(self) -> minqlxtended.DemoStatus:
+        """Demo state as a ``DemoStatus`` of ``(recording, requested, path)``. While
+        recording, the bytes are in ``path + ".part"``; the final size comes with
+        ``demo_finished``. Game thread only, so marshal with
+        :func:`minqlxtended.next_frame`."""
+        return minqlxtended.demo_status(self.id)
+
+    def record_demo(self) -> bool:
+        """Records this player regardless of ``sv_demoRecord``. A demo has to begin at a
+        gamestate, so for a player already in the game this takes effect at their next one.
+        Game thread only, so marshal with :func:`minqlxtended.next_frame`.
+
+        :returns: bool -- True if a demo is already being written, False if it's only queued.
+        """
+        return minqlxtended.start_demo(self.id)
+
+    def stop_demo(self) -> bool:
+        """Finalises any open demo, firing ``demo_finished``, and suppresses recording for
+        this slot until they disconnect even if ``sv_demoRecord`` is on. Game thread only,
+        so marshal with :func:`minqlxtended.next_frame`.
+
+        :returns: bool -- True if a demo was actually being written.
+        """
+        return minqlxtended.stop_demo(self.id)
+
+    @property
+    def is_alive(self) -> bool:
+        return self._live_state.is_alive
 
     @is_alive.setter
-    def is_alive(self, value):
+    def is_alive(self, value: Any) -> None:
         if not isinstance(value, bool):
             raise ValueError("is_alive needs to be a boolean.")
 
         cur = self.is_alive
         if cur and value is False:
-            # TODO: Proper death and not just setting health to 0.
-            self.health = 0
+            self.slay_with_mod(Mod.SUICIDE)
         elif not cur and value is True:
             minqlxtended.player_spawn(self.id)
 
     @property
-    def is_frozen(self):
-        return self.state.is_frozen
+    def is_frozen(self) -> bool:
+        return self._live_state.is_frozen
 
     @property
     def is_bot(self):
-        return str(self._steam_id)[0] == "9"
+        """Whether this is a bot.
+
+        Reads SVF_BOT from r.sv_flags, the test the engine uses.
+
+        .. warning::
+            Not valid during a ``player_connect`` handler. ``SVF_BOT`` is set inside
+            ``ClientConnect``, which runs after that event, so a bot reports as human.
+            Use the ``is_bot`` argument the event passes.
+
+        """
+        return bool(self.entity.r.sv_flags & ServerFlag.BOT)
 
     @property
-    def score(self):
-        return self.stats.score
+    def score(self) -> int:
+        return self._live_stats.score
 
     @score.setter
-    def score(self, value):
-        return minqlxtended.set_score(self.id, value)
+    def score(self, value: int) -> None:
+        self.gclient.ps.persistant[PersistantIndex.ROUND_SCORE] = value
 
     @property
     def channel(self):
         return minqlxtended.TellChannel(self)
 
-    def center_print(self, msg):
-        minqlxtended.send_server_command(self.id, 'cp "{}"'.format(msg))
+    def center_print(self, msg: str) -> None:
+        return _center_print(self.id, msg)
 
     def tell(self, msg, **kwargs):
         return minqlxtended.Plugin.tell(msg, self, **kwargs)
 
-    def kick(self, reason=""):
-        return minqlxtended.Plugin.kick(self, reason)
+    def send_server_command(self, cmd: str) -> bool:
+        """Send this player a server command. See
+        :func:`minqlxtended.send_server_command`, which this calls with their client id."""
+        return minqlxtended.send_server_command(self.id, cmd)
 
-    def ban(self):
-        return minqlxtended.Plugin.ban(self)
+    def client_command(self, cmd: str) -> bool:
+        """Make this player's client run *cmd*, as though they had typed it.
 
-    def tempban(self):
-        return minqlxtended.Plugin.tempban(self)
+        Goes through the ``client_command`` event and any plugins hooking it. See
+        :func:`minqlxtended.client_command`.
+        """
+        return minqlxtended.client_command(self.id, cmd)
 
-    def addadmin(self):
-        return minqlxtended.Plugin.addadmin(self)
+    def play_sound(self, sound_path: str) -> None:
+        """Play a sound file to this player alone.
 
-    def addmod(self):
-        return minqlxtended.Plugin.addmod(self)
+        :raises: ValueError -- if *sound_path* is empty or names a music file.
+        """
+        return minqlxtended.Plugin.play_sound(sound_path, self)
 
-    def demote(self):
-        return minqlxtended.Plugin.demote(self)
+    def play_music(self, music_path: str) -> None:
+        """Play a music file to this player alone.
 
-    def mute(self):
-        return minqlxtended.Plugin.mute(self)
+        :raises: ValueError -- if *music_path* is empty or names a sound file.
+        """
+        return minqlxtended.Plugin.play_music(music_path, self)
 
-    def unmute(self):
-        return minqlxtended.Plugin.unmute(self)
+    def stop_sound(self) -> None:
+        """Stop whatever sounds this player has going."""
+        return minqlxtended.Plugin.stop_sound(self)
 
-    def put(self, team):
-        return minqlxtended.Plugin.put(self, team)
+    def stop_music(self) -> None:
+        """Stop whatever music this player has going."""
+        return minqlxtended.Plugin.stop_music(self)
 
-    def addscore(self, score):
-        return minqlxtended.Plugin.addscore(self, score)
+    def send_configstring(self, index: int, value: str) -> None:
+        """Send this player a configstring only they see.
 
-    def switch(self, other_player):
-        return minqlxtended.Plugin.switch(self, other_player)
+        The server's table is untouched, so a later server-side write to *index* reaches
+        this player and overwrites it. See
+        :meth:`minqlxtended.Plugin.send_configstring_to`. Unrelated to
+        :attr:`configstring`, the ``CS_PLAYERS`` entry describing this player.
+        """
+        return minqlxtended.Plugin.send_configstring_to(self.id, index, value)
 
-    def slap(self, damage=0):
-        return minqlxtended.Plugin.slap(self, damage)
+    def send_configstring_overrides(self, index: int,
+                                    overrides: Mapping[str, str | None]) -> bool:
+        """Send this player a configstring with *overrides* applied to the server's value.
 
-    def slay(self):
-        return minqlxtended.Plugin.slay(self)
+        The read-modify-write form of :meth:`send_configstring`, for infostrings: it
+        replaces keys rather than appending them. Returns False if nothing would change.
+        See :meth:`minqlxtended.Plugin.send_player_configstring`.
+        """
+        return minqlxtended.Plugin.send_player_configstring(self.id, index, overrides)
 
-    def slay_with_mod(self, mod):
+    def kick(self, reason: str = "") -> None:
+        return minqlxtended.Game.kick(self, reason)
+
+    def ban(self) -> None:
+        return minqlxtended.Game.ban(self)
+
+    def tempban(self) -> None:
+        return minqlxtended.Game.tempban(self)
+
+    def addadmin(self) -> None:
+        return minqlxtended.Game.addadmin(self)
+
+    def addmod(self) -> None:
+        return minqlxtended.Game.addmod(self)
+
+    def demote(self) -> None:
+        return minqlxtended.Game.demote(self)
+
+    def mute(self) -> None:
+        return minqlxtended.Game.mute(self)
+
+    def unmute(self) -> None:
+        return minqlxtended.Game.unmute(self)
+
+    def put(self, team: str) -> None:
+        return minqlxtended.Game.put(self, team)
+
+    def addscore(self, score: int) -> None:
+        return minqlxtended.Game.addscore(self, score)
+
+    def switch(self, other_player: "Player") -> None:
+        return minqlxtended.Game.switch(self, other_player)
+
+    def slap(self, damage: int = 0) -> None:
+        return minqlxtended.Game.slap(self, damage)
+
+    def slay(self) -> None:
+        return minqlxtended.Game.slay(self)
+
+    def slay_with_mod(self, mod: int) -> bool:
         return minqlxtended.slay_with_mod(self.id, mod)
 
     @classmethod
-    def all_players(cls):
+    def all_players(cls) -> list["Player"]:
         return [cls(i, info=info) for i, info in enumerate(minqlxtended.players_info()) if info]
 
 
 class AbstractDummyPlayer(Player):
-    def __init__(self, name="DummyPlayer"):
-        info = minqlxtended.PlayerInfo((-1, name, minqlxtended.CS_CONNECTED, _DUMMY_USERINFO, -1, minqlxtended.TEAM_SPECTATOR, minqlxtended.PRIV_NONE))
+    """A player that occupies no client slot, for dispatching commands that didn't come
+    from one. The console, usually.
+
+    Anything that reads a client slot (position, health, weapons, stats, the
+    configstring, the entity) raises NonexistentPlayerError.
+    """
+    def __init__(self, name: str = "DummyPlayer") -> None:
+        info = minqlxtended.PlayerInfo((
+            -1, name, ConnectionState.CONNECTED.index, _DUMMY_USERINFO, -1,
+            Team.SPECTATOR.index, Privilege.NONE.level))
         super().__init__(-1, info=info)
 
     @property
     def id(self):
-        raise AttributeError("Dummy players do not have client IDs.")
+        raise minqlxtended.NonexistentPlayerError("Dummy players do not have client IDs.")
 
     @property
     def steam_id(self):
         raise NotImplementedError("steam_id property needs to be implemented.")
+
+    @property
+    def ip(self):
+        return "127.0.0.1"
+
+    @property
+    def ping(self):
+        return -1
+
+    @property
+    def qport(self):
+        return -1
+
+    @property
+    def is_bot(self):
+        return False
 
     def update(self):
         pass
@@ -681,7 +1014,7 @@ class AbstractDummyPlayer(Player):
     def channel(self):
         raise NotImplementedError("channel property needs to be implemented.")
 
-    def tell(self, msg):
+    def tell(self, msg, **kwargs):
         raise NotImplementedError("tell() needs to be implemented.")
 
 
@@ -697,5 +1030,5 @@ class RconDummyPlayer(AbstractDummyPlayer):
     def channel(self):
         return minqlxtended.CONSOLE_CHANNEL
 
-    def tell(self, msg):
-        self.channel.reply(msg)
+    def tell(self, msg, **kwargs):
+        self.channel.reply(msg, **kwargs)

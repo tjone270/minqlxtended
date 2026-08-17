@@ -1,0 +1,15 @@
+# Lint configuration for the Python package and tools/.
+
+target-version = "py312"
+line-length = 140
+
+[lint]
+# UP031/UP032 keep interpolation on f-strings. Neither fires on a logging call passing its
+# arguments separately, which is the one place the %s form has to stay: the record is only
+# formatted if a handler emits it.
+select = ["E4", "E5", "E7", "E9", "F", "W", "UP031", "UP032"]
+
+ignore = ["E722"]
+
+[lint.per-file-ignores]
+"python/minqlxtended/__init__.py" = ["E402"]

@@ -27,8 +27,13 @@ build/
 
 bin/*.zip
 
+tests/
 .vs/*
 .vscode/*
 bin/minqlxtended-plugins/
 /minqlxtended-plugins
 *.pyc
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
