@@ -15,10 +15,11 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "game_events.h"
-
-#include "profile.h"
+// First, ahead of any system header: Python.h sets _POSIX_C_SOURCE and _XOPEN_SOURCE.
 #include "python/pyminqlxtended.h"
+
+#include "game_events.h"
+#include "profile.h"
 #include "engine/quake_common.h"
 
 // Cached state. Game thread only, so no locking. GameEvents_Reset clears all of it, on map load

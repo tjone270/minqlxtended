@@ -20,6 +20,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define _GNU_SOURCE
 #endif
 
+// First, ahead of any system header: Python.h sets _POSIX_C_SOURCE and _XOPEN_SOURCE.
+#ifndef NOPY
+#include "python/pyminqlxtended.h"
+#endif
+
 #include <dlfcn.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -35,9 +40,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "features/reliable.h"
 #include "features/scoreboard.h"
 #include "maps_parser.h"
-#ifndef NOPY
-#include "python/pyminqlxtended.h"
-#endif
 
 // For comparison with the dedi's executable name to avoid segfaulting
 // bash and the likes if we run this through a script.

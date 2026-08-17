@@ -19,6 +19,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define _GNU_SOURCE
 #define __STDC_FORMAT_MACROS
 
+// First, ahead of any system header: Python.h sets _POSIX_C_SOURCE and _XOPEN_SOURCE.
+#ifndef NOPY
+#include "python/pyminqlxtended.h"
+#endif
+
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +43,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #ifndef NOPY
 #include "features/game_events.h"
-#include "python/pyminqlxtended.h"
 #endif
 
 // qagame module.

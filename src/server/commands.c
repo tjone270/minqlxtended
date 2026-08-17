@@ -20,6 +20,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define _GNU_SOURCE
 #endif
 
+// First, ahead of any system header: Python.h sets _POSIX_C_SOURCE and _XOPEN_SOURCE.
+#ifndef NOPY
+#include "python/pyminqlxtended.h"
+#endif
+
 #include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -31,10 +36,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "engine/quake_common.h"
 #include "features/reliable.h"
 #include "features/scoreboard.h"
-
-#ifndef NOPY
-#include "python/pyminqlxtended.h"
-#endif
 
 // Registered from InitializeStatic, long before InitializeCvars and InitializeVm populate
 // sv_maxclients, g_entities and svs. A `stopfollowing 0` exec'd from a cfg before the first map

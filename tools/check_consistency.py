@@ -218,8 +218,38 @@ def check_views_gate_the_game_module(fail):
              f"first: {', '.join(sorted(offenders))}")
 
 
+def check_python_h_comes_first(fail):
+    """Any TU reaching Python.h must reach it before every other include.
+
+    It sets _POSIX_C_SOURCE and _XOPEN_SOURCE, so read second it redefines what features.h
+    set. Any include counts, not just a system one: game_events.c reached one via profile.h.
+    """
+    entry = re.compile(r'^\s*#\s*include\s*[<"](Python\.h|python/pyminqlxtended\.h'
+                       r'|pyminqlxtended\.h|python_objects\.h)[>"]')
+    any_include = re.compile(r"^\s*#\s*include\s*[<\"]")
+    offenders = []
+    for directory, _dirs, names in os.walk(os.path.join(REPO, "src")):
+        for name in sorted(names):
+            if not name.endswith(".c"):
+                continue
+            path = os.path.join(directory, name)
+            lines = read(path).splitlines()
+            reaches = next((n for n, line in enumerate(lines, 1) if entry.match(line)), None)
+            if reaches is None:
+                continue
+            first = next(n for n, line in enumerate(lines, 1) if any_include.match(line))
+            if reaches != first:
+                rel = os.path.relpath(path, REPO).replace("\\", "/")
+                offenders.append(f"{rel} (line {reaches}, behind line {first})")
+
+    if offenders:
+        fail("these reach Python.h behind another include, so pyconfig.h can redefine what "
+             f"features.h set: {', '.join(offenders)}")
+
+
 CHECKS = (
     check_configstring_skip_list,
+    check_python_h_comes_first,
     check_writable_structs_have_an_end_bound,
     check_natives_gate_the_game_module,
     check_views_gate_the_game_module,

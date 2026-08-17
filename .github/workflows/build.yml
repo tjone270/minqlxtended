@@ -30,7 +30,7 @@ jobs:
           python3 -m ruff check .
       - name: Type check
         run: |
-          python3 -m pip install --upgrade mypy
+          python3 -m pip install --upgrade mypy redis pyzmq
           python3 -m mypy python/minqlxtended --python-version ${{ matrix.python-version }}
       - name: Generated files are current
         run: |
