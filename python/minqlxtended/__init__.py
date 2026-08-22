@@ -57,9 +57,9 @@ from _minqlxtended import (  # noqa: F401
     drop_item, entities, force_vote, force_weapon_respawn_time, get_cvar, get_userinfo,
     items, kick, link_entity, player_expanded_stats, player_info, player_spawn, player_state,
     player_stats, players_info, register_handler, reliable_status, remove_dropped_items,
-    remove_entity, replace_items, send_server_command, set_configstring, set_cvar,
-    set_cvar_limit, slay_with_mod, spawn_entity, spawn_item, start_demo, stop_demo,
-    unlink_entity,
+    remove_entity, replace_items, reset_player_weapon_stats, send_server_command,
+    set_configstring, set_cvar, set_cvar_limit, slay_with_mod, spawn_entity, spawn_item,
+    start_demo, stop_demo, unlink_entity,
     # Struct sequences. Snapshots, taken when you ask for them.
     DemoStatus, Flight, Keys, PlayerExpandedStats, PlayerInfo, PlayerState, PlayerStats,
     Powerups, ReliableStatus, StatHoldables, StatPowerups, Vector3, Weapons,
