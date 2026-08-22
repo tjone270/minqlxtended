@@ -2252,6 +2252,35 @@ static PyObject* PyMinqlxtended_PlayerExpandedStats(PyObject* self, PyObject* ar
     return stats;
 }
 
+/*
+ * shotsFired/shotsHit are WEAPONS-kind fields; QLX_SETTER_WEAPONS in python_objects.c is NULL
+ * on purpose, keeping expanded_stats read-only for shape parity with this function's struct
+ * sequence. This is the dedicated write path instead of a generic setter: it zeroes only those
+ * two arrays, mirroring the pre-minqlxtended C patch's reset_player_accuracy()/
+ * reset_player_stats(), which zeroed the same two fields directly in C.
+ */
+static PyObject* PyMinqlxtended_ResetPlayerWeaponStats(PyObject* self, PyObject* args) {
+    int client_id;
+
+    if (!PyArg_ParseTuple(args, "i:reset_player_weapon_stats", &client_id)) {
+        return NULL;
+    }
+
+    if (!qlx_valid_client_id(client_id)) {
+        return NULL;
+    }
+
+    if (!g_entities || !g_entities[client_id].client) {
+        Py_RETURN_FALSE;
+    }
+
+    expandedStatObj_t* es = &g_entities[client_id].client->expandedStats;
+    memset(es->shotsFired, 0, sizeof(es->shotsFired));
+    memset(es->shotsHit, 0, sizeof(es->shotsHit));
+
+    Py_RETURN_TRUE;
+}
+
 // start_demo/stop_demo/demo_status
 
 static PyObject* PyMinqlxtended_StartDemo(PyObject* self, PyObject* args) {
@@ -2451,6 +2480,9 @@ static PyMethodDef minqlxtendedMethods[] = {
      "Force all weapons to have a specified respawn time, overriding custom map respawn times set for them."},
     {"player_expanded_stats", PyMinqlxtended_PlayerExpandedStats, METH_VARARGS,
      "Get the full set of detailed stats QL tracks for a player this match."},
+    {"reset_player_weapon_stats", PyMinqlxtended_ResetPlayerWeaponStats, METH_VARARGS,
+     "Zeroes a player's per-weapon shots_fired and shots_hit for this match. Those two "
+     "expanded_stats members have no Python setter, so this is the only way to reset them."},
     {"start_demo", PyMinqlxtended_StartDemo, METH_VARARGS,
      "Records a demo of the player regardless of sv_demoRecord. Recording begins at the client's next gamestate."},
     {"stop_demo", PyMinqlxtended_StopDemo, METH_VARARGS,

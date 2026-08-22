@@ -209,6 +209,7 @@ SIGNATURES = {
     "dev_print_items": "() -> None",
     "force_weapon_respawn_time": "(respawn_time: int, /) -> bool",
     "player_expanded_stats": "(client_id: int, /) -> PlayerExpandedStats | None",
+    "reset_player_weapon_stats": "(client_id: int, /) -> bool",
     "start_demo": "(client_id: int, /) -> bool",
     "stop_demo": "(client_id: int, /) -> bool",
     "demo_status": "(client_id: int, /) -> DemoStatus",
