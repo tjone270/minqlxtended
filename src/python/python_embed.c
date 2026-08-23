@@ -236,6 +236,14 @@ static PyStructSequence_Desc weapons_desc = {
     weapons_fields,
     (sizeof(weapons_fields) / sizeof(PyStructSequence_Field)) - 1};
 
+/*
+ * weapons_seq reads arr[i + 1] once per field here, and the WEAPONS setter in
+ * python_objects.c takes the same count back, so a sixteenth name would read past the end
+ * of an int[MAX_WEAPONS].
+ */
+_Static_assert(sizeof(weapons_fields) / sizeof(weapons_fields[0]) == MAX_WEAPONS,
+               "weapons_fields must name every weapon after WP_NONE, and no more");
+
 // Powerups
 static PyTypeObject powerups_type = {0};
 

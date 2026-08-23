@@ -916,24 +916,16 @@ class ExpandedStats:
     num_suicides: int
     num_team_kills: int
     num_team_killed: int
-    @property
-    def num_weapon_kills(self) -> Weapons: ...
-    @property
-    def num_weapon_deaths(self) -> Weapons: ...
-    @property
-    def shots_fired(self) -> Weapons: ...
-    @property
-    def shots_hit(self) -> Weapons: ...
-    @property
-    def damage_dealt(self) -> Weapons: ...
-    @property
-    def damage_taken(self) -> Weapons: ...
+    num_weapon_kills: Weapons
+    num_weapon_deaths: Weapons
+    shots_fired: Weapons
+    shots_hit: Weapons
+    damage_dealt: Weapons
+    damage_taken: Weapons
     powerups: IntArray
     holdable_pickups: IntArray
-    @property
-    def weapon_pickups(self) -> Weapons: ...
-    @property
-    def weapon_usage_time(self) -> Weapons: ...
+    weapon_pickups: Weapons
+    weapon_usage_time: Weapons
     num_captures: int
     num_assists: int
     num_defends: int

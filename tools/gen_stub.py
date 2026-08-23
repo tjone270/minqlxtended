@@ -78,7 +78,7 @@ KIND_TYPES = {
 }
 
 # Kinds whose QLX_SETTER_* expands to NULL, so the stub emits them as read-only properties.
-READONLY_KINDS = {"WEAPONS", "CHARPTR", "ENTREFARR", "INT_RO", "UINT_RO", "BOOL_RO"}
+READONLY_KINDS = {"CHARPTR", "ENTREFARR", "INT_RO", "UINT_RO", "BOOL_RO"}
 
 # Which X-macro list backs which Python type. Checked against names[] in python_objects.c.
 ENGINE_TYPES = [

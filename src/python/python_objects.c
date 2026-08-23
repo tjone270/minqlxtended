@@ -1055,7 +1055,8 @@ static int qlx_teamlock_write(Py_ssize_t index, int value, const char* name) {
 
 /*
  * A per-weapon int[16] as the Weapons struct sequence, the shape player_expanded_stats()
- * reports. Read-only, like the struct sequence.
+ * reports. Fifteen fields to sixteen ints: index 0 is WP_NONE, which the getter skips and
+ * an assignment leaves alone, so the values land on arr[1..15].
  */
 #define QLX_GETSET_WEAPONS(PREFIX, CTYPE, RESOLVE, FIELD, NAME)                            \
     static PyObject* PREFIX##_get_##NAME(PyObject* self, void* closure) {                  \
@@ -1065,6 +1066,14 @@ static int qlx_teamlock_write(Py_ssize_t index, int value, const char* name) {
             return NULL;                                                                   \
         }                                                                                  \
         return PyMinqlxtended_Weapons(p->FIELD);                                           \
+    }                                                                                      \
+    static int PREFIX##_set_##NAME(PyObject* self, PyObject* value, void* closure) {       \
+        (void)closure;                                                                     \
+        CTYPE* p = RESOLVE(self);                                                          \
+        if (!p) {                                                                          \
+            return -1;                                                                     \
+        }                                                                                  \
+        return qlx_store_intarray(value, p->FIELD + 1, MAX_WEAPONS - 1, #NAME);            \
     }
 
 // An array of gentity_t*, read-only. Writing one is niche enough to leave until asked.
@@ -1146,6 +1155,7 @@ static int qlx_teamlock_write(Py_ssize_t index, int value, const char* name) {
 #define QLX_SETTER_VEC3(PREFIX, NAME) (setter)PREFIX##_set_##NAME
 #define QLX_SETTER_CHARBUF(PREFIX, NAME) (setter)PREFIX##_set_##NAME
 #define QLX_SETTER_INTARR(PREFIX, NAME) (setter)PREFIX##_set_##NAME
+#define QLX_SETTER_WEAPONS(PREFIX, NAME) (setter)PREFIX##_set_##NAME
 #define QLX_SETTER_FLOAT(PREFIX, NAME) (setter)PREFIX##_set_##NAME
 #define QLX_SETTER_ENTREF(PREFIX, NAME) (setter)PREFIX##_set_##NAME
 #define QLX_SETTER_FNPTR(PREFIX, NAME) (setter)PREFIX##_set_##NAME
@@ -1153,7 +1163,6 @@ static int qlx_teamlock_write(Py_ssize_t index, int value, const char* name) {
 #define QLX_SETTER_BYTE(PREFIX, NAME) (setter)PREFIX##_set_##NAME
 #define QLX_SETTER_UINT(PREFIX, NAME) (setter)PREFIX##_set_##NAME
 #define QLX_SETTER_U64(PREFIX, NAME) (setter)PREFIX##_set_##NAME
-#define QLX_SETTER_WEAPONS(PREFIX, NAME) NULL
 #define QLX_SETTER_CHARPTR(PREFIX, NAME) NULL
 #define QLX_SETTER_ENTREFARR(PREFIX, NAME) NULL
 #define QLX_SETTER_INT_RO(PREFIX, NAME) NULL
@@ -1165,7 +1174,8 @@ static int qlx_teamlock_write(Py_ssize_t index, int value, const char* name) {
 
 /*
  * The KIND column is hand-written, so this checks it: CHARBUF on a char* memcpys over a
- * pointer the game module owns, and WEAPONS on an array under 16 ints reads past the end.
+ * pointer the game module owns, and WEAPONS on an array under 16 ints reads and writes
+ * past the end.
  */
 #define QLX_FIELD_TYPE(CTYPE, FIELD) __typeof__(((CTYPE*)0)->FIELD)
 #define QLX_FIELD_SIZE(CTYPE, FIELD) sizeof(((CTYPE*)0)->FIELD)
