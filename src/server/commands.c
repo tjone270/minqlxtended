@@ -161,6 +161,10 @@ void __cdecl ScoreboardCommand(void) {
         ENGINE_PRINTF("Counters reset.\n");
         return;
     }
+    if (Cmd_Argc() > 1 && !strcmp(Cmd_Argv(1), "verify")) {
+        Scoreboard_Verify();
+        return;
+    }
     Scoreboard_Report();
 }
 

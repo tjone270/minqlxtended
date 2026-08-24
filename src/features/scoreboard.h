@@ -21,33 +21,52 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "engine/quake_common.h"
 
 /*
- * Tiered team scoreboards. Every scoreboard builder in qagame walks level->sortedClients and
- * returns NULL once the client data passes 0x3FF, the engine's reliable command limit (see
- * RELIABLE_CMD_MAX in reliable.c); SelectScoreboardMessage then falls back to the "smscores"
- * stub and everyone loses their stats. The builder bails before a byte is sent, so this changes
- * what it sees: for the length of one SelectScoreboardMessage call, level->sortedClients is
- * rewritten and some per-client stats blanked, then put back.
+ * Tiered team scoreboards, kept under the size the engine will actually send.
  *
- * Ranking is per team in sortedClients order, TEAM_RED and TEAM_BLUE only; spectators are never
- * ranked or trimmed. team_gametype() in scoreboard.c has the eligible list.
+ * There are two size limits and they do not line up. A qagame builder stops once the client rows
+ * alone pass 0x3FF, and SelectScoreboardMessage then sends the "smscores" stub instead.
+ * SV_SendServerCommand checks the whole command, and throws away anything 1023 bytes or longer
+ * without printing anything. The builders never count their own header, which is 37 fields in
+ * CTF, so a scoreboard the builder was happy with can still reach no one.
  *
- *     to qlx_scoreboardFullPerTeam    untouched
- *     to qlx_scoreboardLightPerTeam   stats blanked
- *     beyond that                     dropped
+ * We use the engine's limit: header plus rows, under qlx_scoreboardBudget. Row width is worked
+ * out from the same fields each builder prints, and rows are cut back only until it fits:
+ *
+ *     1. spectator stats blanked
+ *     2. team ranks past qlx_scoreboardFullPerTeam blanked
+ *     3. team ranks past qlx_scoreboardLightPerTeam dropped
+ *     4. spectator rows dropped
+ *     5. team rows dropped from the bottom, both teams evenly, to qlx_scoreboardMinPerTeam
+ *
+ * The row belonging to whoever asked for the scoreboard is always kept, so a player never gets
+ * one they are missing from.
+ *
+ * We measure the header instead of working it out. It is level_locals_t counters that get wider
+ * as a match runs, and TDM, CTF and Freeze Tag zero half of them depending on which team asked.
+ * The largest one seen so far for that builder is what the next budget uses.
+ *
+ * If the stub turns up anyway, our widths were wrong, so we drop it and build the scoreboard
+ * again with nothing blanked and fewer rows.
  *
  * Game thread only, and only across one synchronous call.
  */
 
 void Scoreboard_Init(void); // register cvars; safe to call more than once
 
-// Wrapped around the real SelectScoreboardMessage. NoteCommand restores the moment the game
-// module hands the built scoreboard to the engine, before any of it is dispatched to Python, and
-// takes the command as the game module wrote it. EndTrim restores it if nothing was sent at all.
-void Scoreboard_BeginTrim(void);
-void Scoreboard_NoteCommand(const char* cmd);
+/*
+ * Wrapped around the real SelectScoreboardMessage. FilterCommand sees the command as the game
+ * module wrote it, before Python does, and returns qtrue to have it thrown away. EndTrim puts
+ * back whatever is still armed. TakeRetry tells you, once, that BeginFallback still has a
+ * scoreboard to rebuild.
+ */
+void Scoreboard_BeginTrim(gentity_t* ent);
+void Scoreboard_BeginFallback(gentity_t* ent);
+qboolean Scoreboard_FilterCommand(const char* cmd);
 void Scoreboard_EndTrim(void);
+qboolean Scoreboard_TakeRetry(void);
 
 void Scoreboard_Reset(void);  // map change: counters and any armed state are stale
 void Scoreboard_Report(void); // "qlx_scoreboard" console output
+void Scoreboard_Verify(void); // "qlx_scoreboard verify": the widths we expect for the current roster
 
 #endif /* SCOREBOARD_H */

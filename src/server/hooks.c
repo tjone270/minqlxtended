@@ -310,8 +310,10 @@ void __cdecl My_SV_SendServerCommand(client_t* cl, char* fmt, ...) {
     // Undo any scoreboard trim first. The intermission statistics messages run later in the same
     // SelectScoreboardMessage call and read the same fields, and the dispatch below is plugin
     // code that would otherwise see the blanked values. Keyed on what the game module sent,
-    // before any handler has rewritten it.
-    Scoreboard_NoteCommand(buffer);
+    // before any handler has rewritten it. qtrue if we are building it again.
+    if (Scoreboard_FilterCommand(buffer)) {
+        return;
+    }
 
     char* res = buffer;
     if (cl && cl->gentity) {
@@ -336,9 +338,16 @@ void __cdecl My_SV_SendServerCommand(client_t* cl, char* fmt, ...) {
 // Keeps the top of each team's scoreboard intact on a busy server, where the builder
 // would otherwise drop everyone to the "smscores" stub. See scoreboard.h.
 void __cdecl My_SelectScoreboardMessage(gentity_t* ent) {
-    Scoreboard_BeginTrim();
+    Scoreboard_BeginTrim(ent);
     SelectScoreboardMessage(ent);
     Scoreboard_EndTrim(); // no-op if the command already went out
+
+    // What went out had blanked stats, or was too long for the engine to send. Do it again.
+    if (Scoreboard_TakeRetry()) {
+        Scoreboard_BeginFallback(ent);
+        SelectScoreboardMessage(ent);
+        Scoreboard_EndTrim();
+    }
 }
 
 void __cdecl My_SV_ClientEnterWorld(client_t* client, usercmd_t* cmd) {
