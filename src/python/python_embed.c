@@ -53,6 +53,8 @@ PyObject* kamikaze_use_handler     = NULL;
 PyObject* kamikaze_explode_handler = NULL;
 
 PyObject* demo_finished_handler = NULL;
+PyObject* demo_recording_started_handler = NULL;
+PyObject* demo_match_finalized_handler = NULL;
 PyObject* demo_stream_handler   = NULL;
 
 PyObject* player_death_handler = NULL;
@@ -117,6 +119,8 @@ static handler_t handlers[] = {
     {"kamikaze_explode", &kamikaze_explode_handler},
 
     {"demo_finished", &demo_finished_handler},
+    {"demo_recording_started", &demo_recording_started_handler},
+    {"demo_match_finalized", &demo_match_finalized_handler},
     {"demo_stream", &demo_stream_handler},
 
     {"player_death", &player_death_handler},
@@ -674,6 +678,13 @@ static PyObject* PyMinqlxtended_PlayerInfo(PyObject* self, PyObject* args) {
     }
 
     if (!qlx_valid_client_id(i)) {
+        return NULL;
+    }
+
+    // makePlayerTuple reads g_entities, which My_G_ShutdownGame NULLs before the game's own
+    // shutdown runs. That shutdown still executes bot client commands, so a client_command
+    // handler building a Player gets here with no game module.
+    if (!qlx_vm_ready()) {
         return NULL;
     }
 
@@ -1309,6 +1320,42 @@ static PyObject* PyMinqlxtended_PlayerStats(PyObject* self, PyObject* args) {
     PyStructSequence_SetItem(stats, 6, PyLong_FromLongLong(g_entities[client_id].client->ps.ping));
 
     return stats;
+}
+
+// set_position
+
+static PyObject* PyMinqlxtended_SetPosition(PyObject* self, PyObject* args) {
+    int client_id;
+    PyObject* new_position;
+    vec3_t origin;
+    int i;
+
+    if (!PyArg_ParseTuple(args, "iO!:set_position", &client_id, &vector3_type, &new_position)) {
+        return NULL;
+    }
+
+    gentity_t* ent = qlx_live_client(client_id);
+    if (!ent) {
+        return NULL;
+    }
+
+    origin[0] = (float)PyFloat_AsDouble(PyStructSequence_GetItem(new_position, 0));
+    origin[1] = (float)PyFloat_AsDouble(PyStructSequence_GetItem(new_position, 1));
+    origin[2] = (float)PyFloat_AsDouble(PyStructSequence_GetItem(new_position, 2));
+
+    for (i = 0; i < 3; i++) {
+        ent->client->ps.origin[i] = origin[i];
+        ent->r.currentOrigin[i] = origin[i];
+        ent->s.origin[i] = origin[i];
+        ent->s.pos.trBase[i] = origin[i];
+    }
+    ent->s.pos.trType = TR_STATIONARY;
+    ent->client->ps.velocity[0] = 0.0f;
+    ent->client->ps.velocity[1] = 0.0f;
+    ent->client->ps.velocity[2] = 0.0f;
+    ent->client->ps.eFlags ^= EF_TELEPORT_BIT;
+
+    Py_RETURN_TRUE;
 }
 
 // drop_holdable
@@ -2732,6 +2779,10 @@ static PyMethodDef minqlxtendedMethods[] = {
      "does.\n\n"
      "Unlinked entities stop colliding and stop being sent to clients; r.linked reads "
      "back False. Game thread only."},
+    {"set_position", PyMinqlxtended_SetPosition, METH_VARARGS,
+     "set_position(client_id, position) -- atomically writes ps.origin, "
+     "r.currentOrigin, s.origin and s.pos.trBase together with a teleport "
+     "flag flip; a four-field write no single typed attribute can express."},
     {NULL, NULL, 0, NULL}};
 
 // "_minqlxtended" matches PyImport_AppendInittab. m_name becomes __name__, and if it disagrees

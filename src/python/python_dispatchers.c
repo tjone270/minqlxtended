@@ -545,6 +545,63 @@ void KamikazeUseDispatcher(int client_id) {
     DispatcherRelease(gstate);
 }
 
+void DemoRecordingStartedDispatcher(int slot, const char* path, const char* name) {
+    if (!demo_recording_started_handler) {
+        return; // No registered handler.
+    }
+
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
+    PyObject* argv[] = {
+        PyLong_FromLong(slot),
+        FromEngine(path),
+        FromEngine(name),
+    };
+    PyObject* result = CallHandler(&demo_recording_started_handler, argv, 3);
+
+    if (result == NULL) {
+        DebugError("CallHandler() returned NULL.\n", __FILE__, __LINE__, __func__);
+    }
+    Py_XDECREF(result);
+    DispatcherRelease(gstate);
+}
+
+// Called from demo_finalize_main() (demo_match.c), a dedicated pthread-created
+// finalize thread - not the game thread, not upstream's demo writer thread.
+// PyGILState_Ensure()/DispatcherRelease() are CPython's own sanctioned mechanism
+// for calling into Python from any OS thread Python didn't create itself, so this
+// call is exactly as safe here as it is on the game thread; no frame-queue or
+// marshaling back to the game thread is needed.
+//
+// The constraint that DOES exist lands on the Python-side handler: since this can
+// fire concurrently with game-thread activity for a later, unrelated match,
+// handlers of demo_match_finalized must not read live GAME-THREAD state - anything
+// that walks the game module: minqlxtended.players(), Player objects,
+// Entity/GameClient, client_t fields.
+//
+// The match_id argument and cvar reads (minqlxtended.get_cvar) ARE safe: a cvar is
+// a stable process-wide string rather than per-frame game state, which is what lets
+// a consumer (an archiving plugin, say) resolve fs_homepath/sv_demoDir from this
+// handler.
+void DemoMatchFinalizedDispatcher(const char* match_id) {
+    if (!demo_match_finalized_handler) {
+        return; // No registered handler.
+    }
+
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
+    PyObject* argv[] = {
+        FromEngine(match_id),
+    };
+    PyObject* result = CallHandler(&demo_match_finalized_handler, argv, 1);
+
+    if (result == NULL) {
+        DebugError("CallHandler() returned NULL.\n", __FILE__, __LINE__, __func__);
+    }
+    Py_XDECREF(result);
+    DispatcherRelease(gstate);
+}
+
 void KamikazeExplodeDispatcher(int client_id, int is_used_on_demand) {
     if (!kamikaze_explode_handler) {
         return; // No registered handler.

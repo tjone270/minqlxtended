@@ -82,6 +82,8 @@ extern PyObject* client_spawn_handler;
 
 extern PyObject* kamikaze_use_handler;
 extern PyObject* kamikaze_explode_handler;
+extern PyObject* demo_recording_started_handler;
+extern PyObject* demo_match_finalized_handler;
 
 extern PyObject* demo_finished_handler;
 extern PyObject* demo_stream_handler;
@@ -222,5 +224,12 @@ void CvarChangedDispatcher(const char* name, const char* old_value, const char* 
  * whether it's a pickup, so most calls aren't. entity_id is the item's own entity. Gated.
  * Returns 0 when a handler cancelled; the touch then never reaches Touch_Item. */
 int ItemTouchDispatcher(int client_id, int entity_id);
+
+void DemoRecordingStartedDispatcher(int slot, const char* path, const char* name);
+
+// Fired from the dedicated demo finalize thread (demo_match.c), not the game
+// thread. Handlers must not read live game-thread state (players(), Player,
+// Entity/GameClient, client_t); cvar reads are fine.
+void DemoMatchFinalizedDispatcher(const char* match_id);
 
 #endif /* PYMINQLXTENDED_H */

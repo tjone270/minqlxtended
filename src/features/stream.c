@@ -209,6 +209,7 @@ static cvar_t *sv_demoStreamDrop;
 static cvar_t *sv_demoStreamMaxLag;
 static cvar_t *sv_demoStreamResync;
 static cvar_t *sv_demoStreamResyncPerFrame;
+static cvar_t *sv_demoStreamKeyframeSec;
 static cvar_t *sv_demoStreaming; // read-only, so a player can tell the server streams
 static cvar_t *sv_fps;
 static cvar_t *sv_steamAccount;
@@ -218,6 +219,8 @@ static uint8_t stream_active[MAX_STREAM_CLIENTS];
 static uint32_t stream_gen[MAX_STREAM_CLIENTS];
 static char stream_name[MAX_STREAM_CLIENTS][40];
 static uint8_t stream_resync_pending[MAX_STREAM_CLIENTS];
+// When this slot last queued a full snapshot; see stream_arm_keyframes.
+static uint64_t stream_last_full_ms[MAX_STREAM_CLIENTS];
 
 // Per-slot override of the sv_demoStreamSlots mask, set from Python: 0 follows the mask, 1 always
 // streams, -1 never. stream_forced_on counts the slots set to 1 and only changes in Stream_Request.
@@ -1312,6 +1315,7 @@ int Stream_Want(int slot, int is_gamestate, client_t *client) {
         stream_active[slot]         = 1;
         stream_gap_count[slot]      = 0;
         stream_resync_pending[slot] = 0;
+        stream_last_full_ms[slot]   = stream_now_ms();
         snprintf(stream_name[slot], sizeof(stream_name[slot]), "%s", client->name);
         // Queued whether the link is up or not: the thread caches and replays it, and a relay that
         // reconnects mid-map cannot decode this POV without it.
@@ -1356,6 +1360,8 @@ void Stream_Block(int slot, int seq, int is_gamestate, client_t *client, const u
     stream_rec_hdr_t hdr = {STREAM_REC_BLOCK, slot, seq, stream_gen[slot], flags, len};
     if (stream_put(&hdr, data) != 0) {
         stream_note_drop(slot, seq, SGR_RING_FULL);
+    } else if (flags & (SBF_FULL | SBF_GAMESTATE)) {
+        stream_last_full_ms[slot] = stream_now_ms();
     }
 }
 
@@ -1645,6 +1651,53 @@ static void stream_publish_serverinfo(int serverid) {
     stream_put(&hdr, info);
 }
 
+// 0 when keyframes are off, else the interval in ms.
+static uint64_t stream_keyframe_ms(void) {
+    if (!sv_demoStreamKeyframeSec) {
+        return 10 * 1000;
+    }
+    if (sv_demoStreamKeyframeSec->integer <= 0) {
+        return 0;
+    }
+    return (uint64_t)cvar_clamped(sv_demoStreamKeyframeSec, 10, 2, 60) * 1000;
+}
+
+// A relay can start a viewer only at a full snapshot. This bounds how far back the last one is by
+// arming the same resync flag a gap does; stream_force_resyncs spends the per-frame budget on it.
+static void stream_arm_keyframes(void) {
+    if (!svs || !svs->clients || !sv_maxclients) {
+        return;
+    }
+    if (sv_demoStreamResync && !sv_demoStreamResync->integer) {
+        return;
+    }
+    uint64_t interval = stream_keyframe_ms();
+    if (interval == 0) {
+        return;
+    }
+    if (!atomic_load_explicit(&stream_link_up, memory_order_relaxed)) {
+        return;
+    }
+    if (stream_shedding) {
+        return; // a full snapshot is the largest message; do not add one while behind
+    }
+    int limit = sv_maxclients->integer;
+    if (limit > MAX_STREAM_CLIENTS) {
+        limit = MAX_STREAM_CLIENTS;
+    }
+    if (limit <= 0) {
+        return;
+    }
+
+    uint64_t now = stream_now_ms();
+    for (int slot = 0; slot < limit; slot++) {
+        if (stream_active[slot] && !stream_resync_pending[slot] &&
+            now - stream_last_full_ms[slot] >= interval) {
+            stream_resync_pending[slot] = 1;
+        }
+    }
+}
+
 // A forced full snapshot means a fragmented message and a visible pause for that client. Doing
 // every client at once hitches the whole server, so one per frame by default.
 static void stream_force_resyncs(void) {
@@ -1731,6 +1784,7 @@ void Stream_Frame(void) {
     }
 
     stream_publish_guid(serverid);
+    stream_arm_keyframes();
     stream_force_resyncs();
 }
 
@@ -1839,6 +1893,9 @@ void Stream_Init(void) {
     sv_demoStreamMaxLag = Cvar_Get("sv_demoStreamMaxLag", "2000", CVAR_ARCHIVE);
     sv_demoStreamResync         = Cvar_Get("sv_demoStreamResync", "1", CVAR_ARCHIVE);
     sv_demoStreamResyncPerFrame = Cvar_Get("sv_demoStreamResyncPerFrame", "1", CVAR_ARCHIVE);
+    // Forces a full snapshot on each streamed POV at least this often, so a relay can start late
+    // viewers. 0 is off, otherwise 2..60 seconds. No effect with sv_demoStreamResync 0.
+    sv_demoStreamKeyframeSec = Cvar_Get("sv_demoStreamKeyframeSec", "10", CVAR_ARCHIVE);
 
     // Tells a player the server streams. The host and token stay out of it.
     sv_demoStreaming = Cvar_Get("sv_demoStreaming", "0", CVAR_SERVERINFO | CVAR_ROM);

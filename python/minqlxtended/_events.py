@@ -993,6 +993,31 @@ class DemoFinishedDispatcher(EventDispatcher):
         return super().dispatch(client_id, path, size, discarded, failed)
 
 
+class DemoRecordingStartedDispatcher(EventDispatcher):
+    """Fires when native per-match demo capture binds a slot's open segment to a
+    match. Carries the final, match-named path the file will be published under."""
+    name = "demo_recording_started"
+
+    @override
+    def dispatch(self, slot, path, name):
+        return super().dispatch(slot, path, name)
+
+
+class DemoMatchFinalizedDispatcher(EventDispatcher):
+    """Fires when the native demo finalize thread finishes the last segment for a
+    match. Runs off the game thread (a dedicated finalize thread, see
+    demo_match.c's demo_finalize_main()) - handlers must not read live game-thread
+    state (minqlxtended.players(), Player objects, Entity/GameClient, client_t),
+    since this can fire concurrently with game-thread activity for a later,
+    unrelated match. The match_id argument and cvar reads are safe.
+    """
+    name = "demo_match_finalized"
+
+    @override
+    def dispatch(self, match_id):
+        return super().dispatch(match_id)
+
+
 class DemoStreamDispatcher(EventDispatcher):
     """Event for the live demo stream's link to the relay coming up or going down. Fires once
     per transition, and only if streaming is configured."""
@@ -1019,6 +1044,8 @@ EVENT_DISPATCHERS.add_dispatcher(PlayerSpawnDispatcher)
 EVENT_DISPATCHERS.add_dispatcher(KamikazeUseDispatcher)
 EVENT_DISPATCHERS.add_dispatcher(KamikazeExplodeDispatcher)
 EVENT_DISPATCHERS.add_dispatcher(DemoFinishedDispatcher)
+EVENT_DISPATCHERS.add_dispatcher(DemoRecordingStartedDispatcher)
+EVENT_DISPATCHERS.add_dispatcher(DemoMatchFinalizedDispatcher)
 EVENT_DISPATCHERS.add_dispatcher(DemoStreamDispatcher)
 EVENT_DISPATCHERS.add_dispatcher(StatsDispatcher)
 EVENT_DISPATCHERS.add_dispatcher(VoteCalledDispatcher)

@@ -22,7 +22,18 @@ COMMON_SOURCES = src/server/dllmain.c src/server/hooks.c src/server/commands.c \
                  src/server/misc.c src/server/maps_parser.c \
                  src/hook/simple_hook.c src/hook/trampoline.c src/hook/patches.c \
                  src/hook/protect.c \
-                 src/features/demos.c src/features/profile.c src/features/stream.c
+                 src/features/demos.c src/features/demo_name.c src/features/profile.c \
+                 src/features/demo_match.c src/features/stream.c src/features/rcon_send.c
+# democut: this repo's own .dm_91 reader/cutter (plain C, gnu11), which
+# src/features/demo_match.c calls for demo_scan()/demo_index()/demo_cut().
+# In COMMON_SOURCES so all four targets link demo_match.c.
+COMMON_SOURCES += src/democut/democut.c \
+                  src/democut/dc_parser.c \
+                  src/democut/dc_msg_read.c \
+                  src/democut/dc_msg_write.c \
+                  src/democut/dc_fields.c \
+                  src/democut/dc_huffman.c
+
 SOURCES_NOPY += $(COMMON_SOURCES)
 SOURCES += $(COMMON_SOURCES) \
            src/features/reliable.c src/features/scoreboard.c src/features/game_events.c \

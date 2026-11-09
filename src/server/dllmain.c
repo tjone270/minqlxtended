@@ -37,6 +37,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "engine/patterns.h"
 #include "engine/quake_common.h"
 #include "features/demos.h"
+#include "features/rcon_send.h"
 #include "features/reliable.h"
 #include "features/scoreboard.h"
 #include "features/stream.h"
@@ -292,6 +293,9 @@ static void SearchFunctions(void) {
     if (sv == NULL) {
         DebugPrint("WARNING: Unable to resolve sv. minqlxtended.server will raise.\n");
     }
+
+    // A tolerated miss, like the two above: it only costs sv_rconSendTimeout.
+    RconSend_Resolve(&module);
 
     if (failed) {
         DebugPrint("Exiting.\n");

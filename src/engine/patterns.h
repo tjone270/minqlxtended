@@ -145,6 +145,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define PTRN_MP_LOCKORUNLOCKTEAM "\x89\xfa\x48\x8d\x05\x00\x00\x00\x00\x48\x83\xc2\x04\x39\x74\x90\x0c\x74\x00\x55\x53\x48\x8d\x1d\x00\x00\x00\x00\x48\x83\xec\x08\x89\x74\x90\x0c\x48\x8b\x05\x00\x00\x00\x00\x85\xf6\x48\x8b\x00"
 #define MASK_MP_LOCKORUNLOCKTEAM "XXXXX----XXXXXXXXX-XXXXX----XXXXXXXXXXX----XXXXX"
 
+// Anchors for the zmq rcon socket, which the engine drives through a statically linked czmq
+// and libzmq with no symbols. Neither is called; see features/rcon_send.c.
+// The function in id_zmq.cpp that Com_Printf calls to send each console line to every rcon
+// client. It opens by loading the zsock_t* of the rcon ROUTER socket into RDI.
+#define PTRN_RCON_BROADCAST "\x41\x54\x55\x48\x89\xfd\x53\x48\x83\xec\x10\x48\x8b\x3d\x00\x00\x00\x00\x48\x85\xff\x0f\x84\x00\x00\x00\x00\x48\x8b\x1d\x00\x00\x00\x00\x48"
+#define MASK_RCON_BROADCAST "XXXXXXXXXXXXXX----XXXXX----XXX----X"
+// czmq's zsock_set_router_mandatory: the ROUTER type check (6), then zmq_setsockopt with
+// option 0x21 (ZMQ_ROUTER_MANDATORY). It is only here for that call's target.
+#define PTRN_ZSOCK_SET_ROUTER_MANDATORY "\x53\x48\x89\xfb\x48\x83\xec\x10\x48\x85\xff\x89\x74\x24\x0c\x0f\x84\x00\x00\x00\x00\xe8\x00\x00\x00\x00\x83\xf8\x06\x48\x89\xdf\x75\x00\xe8\x00\x00\x00\x00\x48\x8d\x54\x24\x0c\xb9\x04\x00\x00\x00\xbe\x21\x00\x00\x00\x48\x89\xc7\xe8\x00\x00\x00\x00\x85\xc0"
+#define MASK_ZSOCK_SET_ROUTER_MANDATORY "XXXXXXXXXXXXXXXXX----X----XXXXXXX-X----XXXXXXXXXXXXXXXXXXX----XX"
+
 // Functions without patterns.
 #define OFFSET_RELP_CMD_ARGC ((pint)SV_Map_f + 0x81)
 #define OFFSET_RELP_CVAR_VARS ((pint)Cvar_Get + 0x208)
@@ -171,6 +182,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define OFFSET_RELP_LEVEL ((pint)G_InitGame + 0x4A1)
 #define OFFSET_RELP_BG_ITEMLIST ((pint)LaunchItem + 0x2A)
 #define OFFSET_RELP_PP_PLAYER_DIE ((pint)ClientSpawn + 0x6A2)
+
+// The rcon socket's zsock_t* global (the MOV in its opening) and libzmq's zmq_setsockopt (the
+// CALL), each relative to where its anchor pattern matched.
+#define RELOFFSET_RELP_RCON_ZSOCK 0x0E
+#define RELOFFSET_RELP_ZMQ_SETSOCKOPT 0x3A
 
 // server structs
 #define OFFSET_PP_SVS ((pint)SV_Shutdown + 0xAC)

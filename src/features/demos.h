@@ -21,12 +21,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "engine/quake_common.h"
 
+// Longest destination Demo_Snapshot accepts, so a caller can size its own buffer.
+// Bounded by demo_finished_t::path, which has to hold it plus a ".part" suffix.
+#define DEMO_SNAPSHOT_PATH_MAX 512
+
 // A segment the writer thread has finished with, handed back to the game thread so the
 // completion is reported to Python from a context that can take the GIL.
 typedef struct {
     int slot;
     int discarded;  // held only a gamestate and was removed again; nothing at path
     int failed;     // open/write/rename error; path is the .part left on disk
+    // A Demo_Snapshot copy rather than a segment that closed: the slot is STILL
+    // recording, path names the copy, and nothing about the capture itself has
+    // changed. Handlers that react to "this client's demo ended" must skip these.
+    int snapshot;
     uint32_t gen;   // demo_gen[slot] at the time the segment was opened
     long bytes;     // bytes written to the file
     // 512 for the final name, plus room for the ".part" suffix the failure paths report.
@@ -51,6 +59,13 @@ int Demo_GetRequest(int slot);       // current override mode for the slot
 qboolean Demo_IsRecording(int slot); // a segment is currently open for the slot
 const char *Demo_GetPath(int slot);  // final name of the open segment, else NULL
 void Demo_AbandonSlot(int slot, uint32_t gen); // stop capturing a segment the writer lost
+
+// Copies everything written to this slot's open segment so far into dest_path and
+// leaves the segment recording. The copy is a complete, self-contained demo; the
+// original keeps growing. Reported back through the completion queue with
+// .snapshot set. qfalse - and no completion at all - when the slot is not
+// recording, dest_path does not fit, or the ring is full.
+qboolean Demo_Snapshot(int slot, const char *dest_path);
 
 // Completion queue. Demo_PendingFinished is a lock-free count so the frame hook can skip
 // the rest when there is nothing to report. Game thread only.

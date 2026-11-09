@@ -33,6 +33,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <unistd.h>
 
 #include "common.h"
+#include "demo_name.h"
 #include "demos.h"
 #include "profile.h"
 #include "stream.h"
@@ -50,6 +51,7 @@ typedef enum {
     DEMO_REC_CLOSE,     // no payload
     DEMO_REC_CLOSE_ALL, // no payload, slot ignored
     DEMO_REC_SHUTDOWN,  // no payload; writer finalises every open demo and exits
+    DEMO_REC_SNAPSHOT,  // payload: destination path; seq carries the expected gen
 } demo_rec_type_t;
 
 typedef struct {
@@ -126,26 +128,6 @@ static cvar_t *fs_homepath;
 
 static const int32_t demo_eof[2] = {-1, -1};
 
-static void demo_sanitise(char *dst, size_t n, const char *src) {
-    size_t j = 0;
-    for (size_t i = 0; src && src[i] && j + 1 < n; i++) {
-        char c = src[i];
-        if (c == '^' && src[i + 1]) { // colour code: skip '^' and the following char.
-            i++;
-            continue;
-        }
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
-            dst[j++] = c;
-        } else if (c == ' ') {
-            dst[j++] = '_';
-        }
-    }
-    if (j == 0) {
-        dst[j++] = 'x';
-    }
-    dst[j] = '\0';
-}
-
 static void demo_mkdir_p(const char *path) {
     char tmp[512];
     snprintf(tmp, sizeof(tmp), "%s", path);
@@ -170,7 +152,7 @@ static void demo_build_name(char *out, size_t n, int slot, client_t *client) {
     }
 
     char name[64];
-    demo_sanitise(name, sizeof(name), client->name);
+    Demo_SanitiseName(name, sizeof(name), client->name);
 
     const char *fmt = (sv_demoNameFormat && sv_demoNameFormat->string[0]) ? sv_demoNameFormat->string
                                                                           : "%date_slot%slot_%name";
@@ -264,7 +246,7 @@ static void demo_part_name(char *out, size_t n, const char *path) {
 // Queues a finished segment for the game thread to report. Must not block: on overflow we
 // count the loss instead of stalling the writer.
 static void writer_publish_done(int slot, uint32_t gen, const char *path, long bytes, int discarded,
-                                int failed) {
+                                int failed, int snapshot) {
     pthread_mutex_lock(&demo_lock);
     if (demo_done_head - demo_done_tail >= DEMO_DONE_MAX) {
         demo_done_dropped++;
@@ -274,6 +256,7 @@ static void writer_publish_done(int slot, uint32_t gen, const char *path, long b
         f->gen             = gen;
         f->discarded       = discarded;
         f->failed          = failed;
+        f->snapshot        = snapshot;
         f->bytes           = bytes;
         snprintf(f->path, sizeof(f->path), "%s", path);
         demo_done_head++;
@@ -302,23 +285,23 @@ static void writer_finalise(demo_client_t *d) {
         // Leave it as .part and report the failure, matching writer_handle_block. The byte
         // count is what we handed to stdio, so it overstates what reached the disk.
         DebugPrint("demo: write failed finalising %s\n", part);
-        writer_publish_done(slot, d->gen, part, d->bytes, 0, 1);
+        writer_publish_done(slot, d->gen, part, d->bytes, 0, 1, 0);
         return;
     }
     if (d->blocks <= 1) { // only the gamestate.
         unlink(part);
         DebugPrint("demo: discarded empty segment %s\n", d->path);
-        writer_publish_done(slot, d->gen, d->path, d->bytes, 1, 0);
+        writer_publish_done(slot, d->gen, d->path, d->bytes, 1, 0, 0);
         return;
     }
     // Published only once the file is in its final place, so a handler never sees a
     // half-written .part. A failed rename leaves it under the .part name, so report that.
     if (rename(part, d->path)) {
         DebugPrint("demo: could not rename %s into place\n", part);
-        writer_publish_done(slot, d->gen, part, d->bytes, 0, 1);
+        writer_publish_done(slot, d->gen, part, d->bytes, 0, 1, 0);
         return;
     }
-    writer_publish_done(slot, d->gen, d->path, d->bytes, 0, 0);
+    writer_publish_done(slot, d->gen, d->path, d->bytes, 0, 0, 0);
 }
 
 static void writer_handle_open(int slot, uint32_t gen, const char *path) {
@@ -330,7 +313,7 @@ static void writer_handle_open(int slot, uint32_t gen, const char *path) {
     size_t plen = strlen(path);
     if (plen >= sizeof(d->path)) {
         DebugPrint("demo: path too long, not recording slot %d\n", slot);
-        writer_publish_done(slot, gen, path, 0, 0, 1);
+        writer_publish_done(slot, gen, path, 0, 0, 1, 0);
         return;
     }
     memcpy(d->path, path, plen + 1);
@@ -348,7 +331,7 @@ static void writer_handle_open(int slot, uint32_t gen, const char *path) {
     d->fh = fopen(part, "wb");
     if (!d->fh) {
         DebugPrint("demo: could not open %s\n", part);
-        writer_publish_done(slot, gen, part, 0, 0, 1);
+        writer_publish_done(slot, gen, part, 0, 0, 1, 0);
         return;
     }
     setvbuf(d->fh, NULL, _IOFBF, 64 * 1024);
@@ -371,11 +354,115 @@ static void writer_handle_block(int slot, int32_t seq, const unsigned char *data
         // keeps queueing blocks the writer will drop until the next gamestate.
         char part[sizeof(d->path) + 8];
         demo_part_name(part, sizeof(part), d->path);
-        writer_publish_done(slot, d->gen, part, d->bytes, 0, 1);
+        writer_publish_done(slot, d->gen, part, d->bytes, 0, 1, 0);
         return;
     }
     d->blocks++;
     d->bytes += (long)sizeof(hdr) + (long)len;
+}
+
+// A copy of a segment that is still recording, taken without interrupting it.
+//
+// This is what lets a SECOND match on the same map be recorded at all. A .dm_91
+// is a delta chain whose first message must be a gamestate, and a plain
+// map_restart between two matches does not send one - so closing the capture at
+// the end of match 1 leaves nothing that could legally be reopened for match 2,
+// and the players who were already there record nothing (see the note on
+// demo_disarm_match in demo_match.c). Copying the bytes written so far instead
+// leaves the capture running straight across the restart, and hands the cutter a
+// complete, self-contained file to work on exactly as it would on a closed one.
+//
+// Runs on the writer thread, which owns the handle, so the length it copies is
+// exactly the length it has written: no half-written trailing block can appear
+// in the copy, and the game thread never has to know how far the writer got.
+static unsigned char writer_copy_buf[64 * 1024];
+
+static void writer_handle_snapshot(int slot, uint32_t gen, const char *dest_in) {
+    demo_client_t *d = &demos[slot];
+
+    // Taken out of the ring payload into a bounded buffer first. Demo_Snapshot
+    // already refuses anything longer, so this only ever copies; what it buys is
+    // a length the compiler can see, for the snprintf()s below.
+    char dest[DEMO_SNAPSHOT_PATH_MAX];
+    if (snprintf(dest, sizeof(dest), "%s", dest_in) >= (int)sizeof(dest)) {
+        DebugPrint("demo: snapshot path too long for slot %d\n", slot);
+        writer_publish_done(slot, d->gen, d->path, 0, 0, 1, 1);
+        return;
+    }
+
+    if (!d->fh || d->gen != gen) {
+        // Closed, or already reopened for a later segment, between the request
+        // being queued and this running. Nothing to copy, and copying the wrong
+        // file would be worse than copying none.
+        writer_publish_done(slot, d->gen, dest, 0, 0, 1, 1);
+        return;
+    }
+    if (d->blocks <= 1) { // only the gamestate - the same verdict writer_finalise gives.
+        writer_publish_done(slot, d->gen, dest, 0, 1, 0, 1);
+        return;
+    }
+
+    long want = d->bytes;
+    if (fflush(d->fh) || ferror(d->fh)) {
+        DebugPrint("demo: could not flush slot %d for snapshot %s\n", slot, dest);
+        writer_publish_done(slot, d->gen, dest, 0, 0, 1, 1);
+        return;
+    }
+
+    char srcpart[sizeof(d->path) + 8];
+    demo_part_name(srcpart, sizeof(srcpart), d->path);
+
+    char dstpart[DEMO_SNAPSHOT_PATH_MAX + 8];
+    demo_part_name(dstpart, sizeof(dstpart), dest);
+
+    char dir[DEMO_SNAPSHOT_PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s", dest);
+    char *sep = strrchr(dir, '/');
+    if (sep) {
+        *sep = '\0';
+        demo_mkdir_p(dir);
+    }
+
+    FILE *in = fopen(srcpart, "rb");
+    if (!in) {
+        DebugPrint("demo: could not reopen %s to snapshot it\n", srcpart);
+        writer_publish_done(slot, d->gen, dest, 0, 0, 1, 1);
+        return;
+    }
+    FILE *out = fopen(dstpart, "wb");
+    if (!out) {
+        DebugPrint("demo: could not open %s\n", dstpart);
+        fclose(in);
+        writer_publish_done(slot, d->gen, dest, 0, 0, 1, 1);
+        return;
+    }
+
+    int bad   = 0;
+    long left = want;
+    while (left > 0) {
+        size_t chunk = (left < (long)sizeof(writer_copy_buf)) ? (size_t)left : sizeof(writer_copy_buf);
+        size_t got   = fread(writer_copy_buf, 1, chunk, in);
+        if (got != chunk || fwrite(writer_copy_buf, 1, got, out) != got) {
+            bad = 1;
+            break;
+        }
+        left -= (long)got;
+    }
+    // The same end marker writer_finalise appends, so the copy reads as a file
+    // that finished rather than one that merely stops.
+    bad |= (fwrite(demo_eof, sizeof(demo_eof), 1, out) != 1);
+    fclose(in);
+    bad |= (fclose(out) != 0);
+
+    if (bad || rename(dstpart, dest)) {
+        DebugPrint("demo: snapshot of slot %d into %s failed\n", slot, dest);
+        unlink(dstpart);
+        writer_publish_done(slot, d->gen, dest, 0, 0, 1, 1);
+        return;
+    }
+
+    DebugPrint("demo: snapshotted %ld bytes of slot %d -> %s (still recording)\n", want, slot, dest);
+    writer_publish_done(slot, d->gen, dest, want + (long)sizeof(demo_eof), 0, 0, 1);
 }
 
 static void *demo_writer_main(void *unused) {
@@ -434,6 +521,12 @@ static void *demo_writer_main(void *unused) {
                 break;
             case DEMO_REC_BLOCK:
                 writer_handle_block(hdr.slot, hdr.seq, writer_scratch, len);
+                break;
+            case DEMO_REC_SNAPSHOT:
+                if (len > 0) {
+                    writer_scratch[len - 1] = '\0';
+                    writer_handle_snapshot(hdr.slot, (uint32_t)hdr.seq, (const char *)writer_scratch);
+                }
                 break;
             case DEMO_REC_CLOSE:
                 writer_finalise(&demos[hdr.slot]);
@@ -878,6 +971,24 @@ const char *Demo_GetPath(int slot) {
         return NULL;
     }
     return demo_path[slot];
+}
+
+// Queues a copy of the slot's open segment. See writer_handle_snapshot for why this
+// exists and demos.h for the contract. The generation goes in the record so the writer
+// can refuse to copy a file that is no longer the one the caller meant.
+qboolean Demo_Snapshot(int slot, const char *dest_path) {
+    if (slot < 0 || slot >= MAX_DEMO_CLIENTS || !dest_path || !dest_path[0]) {
+        return qfalse;
+    }
+    if (strlen(dest_path) >= DEMO_SNAPSHOT_PATH_MAX) {
+        return qfalse;
+    }
+    if (demo_state_cached != DEMO_THREAD_RUNNING || !demo_active[slot]) {
+        return qfalse;
+    }
+    demo_rec_hdr_t hdr = {DEMO_REC_SNAPSHOT, (int32_t)slot, (int32_t)demo_gen[slot],
+                          (uint32_t)strlen(dest_path) + 1};
+    return demo_ring_put(&hdr, dest_path) == 0 ? qtrue : qfalse;
 }
 
 // The writer lost the segment, so stop feeding it. Ignored unless the slot is still on

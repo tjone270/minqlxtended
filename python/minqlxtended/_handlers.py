@@ -971,6 +971,25 @@ def handle_demo_finished(client_id, path, size, discarded, failed):
         minqlxtended.log_exception()
         return True
 
+
+def handle_demo_recording_started(slot, path, name):
+    try:
+        return minqlxtended.EVENT_DISPATCHERS["demo_recording_started"].dispatch(
+            int(slot), path, name)
+    except:
+        minqlxtended.log_exception()
+        return True
+
+def handle_demo_match_finalized(match_id):
+    # Runs off the game thread (dedicated finalize thread - see demo_match.c's
+    # demo_finalize_main()). Do not add live game-thread state reads here
+    # (players(), Player, Entity/GameClient, client_t); cvar reads are fine.
+    try:
+        return minqlxtended.EVENT_DISPATCHERS["demo_match_finalized"].dispatch(match_id)
+    except:
+        minqlxtended.log_exception()
+        return True
+
 def handle_demo_stream(connected, endpoint, error):
     """Called when the live demo stream's link to the relay comes up or goes down.
 
@@ -1076,6 +1095,8 @@ def register_handlers():
     minqlxtended.register_handler("kamikaze_explode", handle_kamikaze_explode)
 
     minqlxtended.register_handler("demo_finished", handle_demo_finished)
+    minqlxtended.register_handler("demo_recording_started", handle_demo_recording_started)
+    minqlxtended.register_handler("demo_match_finalized", handle_demo_match_finalized)
     minqlxtended.register_handler("demo_stream", handle_demo_stream)
 
     minqlxtended.register_handler("player_death", handle_player_death)

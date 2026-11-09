@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "python/pyminqlxtended.h"
 
 #include "game_events.h"
+#include "demo_match.h"
 #include "profile.h"
 #include "engine/quake_common.h"
 
@@ -213,16 +214,24 @@ static void CheckGameState(void) {
     last_warmup_time = now;
 
     // A crossing. warmupTime counts down while it is positive, so only the
-    // moves between the three bands are events.
+    // moves between the three bands are events. DemoMatch rides the same
+    // crossings, so match demo capture needs no plugin - see demo_match.h.
     if (now > 0 && was <= 0) {
+        DemoMatch_OnGameCountdown();
         GameCountdownDispatcher();
     } else if (now == 0 && was != 0) {
+        DemoMatch_OnGameStart();
         GameStartDispatcher();
     } else if (now < 0 && was == 0) {
         // In progress and then back to waiting for players, with no intermission queued: a
         // forfeit, or an admin ending it. Never a map change; both My_SV_SpawnServer and
         // My_G_InitGame reset the baseline first, so no frame ever observes that crossing.
+        DemoMatch_OnGameEnd();
         GameEndDispatcher(1);
+    } else if (now < 0 && was > 0) {
+        // A countdown that fell apart before the match went live. No Python
+        // event fires here (never has); only the demo arm is taken back.
+        DemoMatch_OnCountdownCancelled();
     }
 }
 
@@ -235,6 +244,7 @@ static void CheckIntermission(void) {
     if (queued && !was) {
         // One of two paths to game_end, the other being the abandoned match in
         // CheckGameState above. Python's `_game_ended` latches so only one fires per match.
+        DemoMatch_OnGameEnd();
         GameEndDispatcher(level->matchForfeited ? 1 : 0);
     }
 }
