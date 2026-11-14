@@ -1935,6 +1935,8 @@ typedef void(__cdecl *SV_UnlinkEntity_ptr)(sharedEntity_t *gEnt);
 typedef void(__cdecl *SV_SpawnServer_ptr)(char *server, qboolean killBots);
 typedef void(__cdecl *Cmd_ExecuteString_ptr)(const char *text);
 typedef int(__cdecl *idSteamServer_DownloadItem_ptr)(uint64_t workshopId, qboolean defer);
+// Hands a connectionless packet to Steam. Returns non-zero if Steam took it, so the server does not go on with it.
+typedef int(__cdecl *SV_HandleSteamPacket_ptr)(const netadr_t *from, const msg_t *msg);
 
 // VM functions.
 typedef void(__cdecl *G_RunFrame_ptr)(int time);
@@ -2000,6 +2002,7 @@ extern SV_SpawnServer_ptr SV_SpawnServer;
 extern Cmd_ExecuteString_ptr Cmd_ExecuteString;
 extern Sys_IsLANAddress_ptr Sys_IsLANAddress;
 extern idSteamServer_DownloadItem_ptr idSteamServer_DownloadItem;
+extern SV_HandleSteamPacket_ptr SV_HandleSteamPacket; // NULL if the pattern did not match
 extern SV_LinkEntity_ptr SV_LinkEntity;     // NULL if the pattern did not match
 extern SV_UnlinkEntity_ptr SV_UnlinkEntity; // NULL if the pattern did not match
 

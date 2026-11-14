@@ -39,6 +39,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "features/demos.h"
 #include "features/reliable.h"
 #include "features/scoreboard.h"
+#include "features/steam_query_limit.h"
 #include "features/stream.h"
 #include "maps_parser.h"
 
@@ -83,6 +84,7 @@ SV_SpawnServer_ptr SV_SpawnServer;
 Cmd_ExecuteString_ptr Cmd_ExecuteString;
 Sys_IsLANAddress_ptr Sys_IsLANAddress;
 idSteamServer_DownloadItem_ptr idSteamServer_DownloadItem;
+SV_HandleSteamPacket_ptr SV_HandleSteamPacket;
 SV_LinkEntity_ptr SV_LinkEntity;
 SV_UnlinkEntity_ptr SV_UnlinkEntity;
 
@@ -207,6 +209,14 @@ static void SearchFunctions(void) {
     STATIC_SEARCH(Sys_IsLANAddress, PTRN_SYS_ISLANADDRESS, MASK_SYS_ISLANADDRESS);
     STATIC_SEARCH(SV_UpdateUserinfo_f, PTRN_SV_UPDATEUSERINFO_F, MASK_SV_UPDATEUSERINFO_F);
     STATIC_SEARCH(idSteamServer_DownloadItem, PTRN_idSteamServer_DownloadItem, MASK_idSteamServer_DownloadItem);
+
+    // A tolerated miss: only the query limit needs it, and the server runs fine without.
+    SV_HandleSteamPacket = (SV_HandleSteamPacket_ptr)PatternSearchModule(&module, PTRN_SV_HANDLESTEAMPACKET, MASK_SV_HANDLESTEAMPACKET);
+    if (SV_HandleSteamPacket == NULL) {
+        DebugPrint("WARNING: Unable to find SV_HandleSteamPacket. The Steam query limit is disabled.\n");
+    } else {
+        DebugPrint("SV_HandleSteamPacket: %p\n", SV_HandleSteamPacket);
+    }
 
     /*
      * Tolerated misses: these two only back link_entity() and unlink_entity(), which raise
@@ -543,6 +553,7 @@ void InitializeCvars(void) {
 
     Demo_Init();   // Register the sv_demo* cvars now.
     Stream_Init(); // ...and the sv_demoStream* ones.
+    SteamQueryLimit_Init(); // ...and qlx_steamQuery*.
 #ifndef NOPY
     Reliable_Init();   // Same for qlx_reliable*.
     Scoreboard_Init(); // ...and qlx_scoreboard*.

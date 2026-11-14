@@ -39,6 +39,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "engine/quake_common.h"
 #include "features/reliable.h"
 #include "features/scoreboard.h"
+#include "features/steam_query_limit.h"
 #include "features/stream.h"
 #include "hook/simple_hook.h"
 
@@ -142,6 +143,17 @@ void __cdecl My_G_InitGame(int levelTime, int randomSeed, int restart) {
 
 qboolean __cdecl My_Sys_IsLANAddress(netadr_t adr) {
     return qtrue; // the server will always believe that all IPs presented are LAN addresses
+}
+
+// Steam answers a server query with a packet much larger than the request, so a query with a
+// forged source address can be used to flood someone else. A query over the limit is reported as
+// handled, so it never reaches Steam.
+int __cdecl My_SV_HandleSteamPacket(const netadr_t* from, const msg_t* msg) {
+    if (!SteamQueryLimit_Allow(from, msg)) {
+        return 1;
+    }
+
+    return SV_HandleSteamPacket(from, msg);
 }
 
 #ifdef NOPY
@@ -765,6 +777,14 @@ void HookStatic(void) {
     if (res) {
         DebugPrint("ERROR: Failed to hook Sys_IsLANAddress: %d\n", res);
         failed = 1;
+    }
+
+    if (SV_HandleSteamPacket != NULL) {
+        // Not fatal: without the hook the server only runs without the query limit.
+        res = Hook((void*)SV_HandleSteamPacket, My_SV_HandleSteamPacket, (void*)&SV_HandleSteamPacket);
+        if (res) {
+            DebugPrint("ERROR: Failed to hook SV_HandleSteamPacket: %d\n", res);
+        }
     }
 
     res = Hook((void*)SV_SendMessageToClient, My_SV_SendMessageToClient, (void*)&SV_SendMessageToClient);
